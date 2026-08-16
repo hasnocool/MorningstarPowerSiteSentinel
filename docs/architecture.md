@@ -1,46 +1,13 @@
 # Architecture
 
-PowerSite Sentinel sits above MorningstarModbusAPI rather than duplicating its Modbus implementation.
+PowerSite Sentinel sits above MorningstarModbusAPI and does not duplicate its Modbus or history implementation.
 
-```text
-Morningstar controllers / ReadyEdge / GenStar / ReadyBlocks
-                         |
-                         v
-                MorningstarModbusAPI
-         identity + telemetry + history + provenance
-                         |
-               read-only HTTP system API
-                         |
-                         v
-                PowerSite Sentinel
-       +-----------------+------------------+
-       |                 |                  |
-  site adapter      rule engine       incident store
-       |                 |                  |
-       +-----------------+------------------+
-                         |
-             health + explanation API
-                         |
-                         v
-                 local site-first UI
-```
+MorningstarModbusAPI owns controller identity, connection reconciliation, register semantics, raw/retained history, gap reconciliation, component topology, power flow, energy-ledger provenance, and bounded local energy integration. Sentinel adds live health, controller-day continuity diagnostics, controller/local energy comparison, evidence-gated incidents, and a unified forensic timeline.
 
-## Boundaries
+## Two monitoring cadences
 
-Sentinel does not poll Modbus devices directly in v0.1. The upstream API owns physical controller identity,
-connection reconciliation, register/catalog semantics, retained history, component topology, power flow, and
-energy-ledger provenance.
-
-Sentinel adds a second-order operational model:
-
-- deterministic findings from already-normalized site telemetry;
-- a health score that does not punish missing instrumentation as if it were a fault;
-- a separate observability score;
-- persistent incident open/resolved lifecycle;
-- plain-language explanation of current power flow and priority findings.
+Live health remains fast. Historical analysis runs on a separate slower loop (five minutes by default) and cache so a 15-second dashboard refresh does not repeatedly issue all controller history queries.
 
 ## Evidence policy
 
-The rule engine is intentionally conservative. An upstream measurement conflict becomes a Sentinel finding; it is
-not averaged away. Unknown battery/load/generator measurements remain unknown. Derived power is displayed only when
-the upstream API already supplies the derivation and its formula/provenance.
+Unknown remains unknown. Recovered daily history is not reconstructed intra-day telemetry. Controller-reported and locally integrated energy stay separate. A discrepancy is diagnostic evidence, not an assertion either source is wrong. Incident resolution requires positive evidence rather than mere disappearance of the triggering signal.

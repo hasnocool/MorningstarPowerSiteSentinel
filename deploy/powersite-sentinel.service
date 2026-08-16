@@ -1,0 +1,21 @@
+[Unit]
+Description=Morningstar PowerSite Sentinel
+Documentation=https://github.com/hasnocool/MorningstarPowerSiteSentinel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hyperion
+Group=hyperion
+WorkingDirectory=/home/hyperion/Code/projects/MorningstarPowerSiteSentinel
+Environment=PATH=/home/hyperion/Code/projects/MorningstarPowerSiteSentinel/.venv/bin
+ExecStart=/home/hyperion/Code/projects/MorningstarPowerSiteSentinel/.venv/bin/powersite-sentinel --config config.toml serve
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=powersite-sentinel
+
+[Install]
+WantedBy=multi-user.target
