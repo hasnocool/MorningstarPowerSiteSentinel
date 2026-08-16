@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PowerSite Sentinel</title>
     <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/site-inspector.css" />
   </head>
   <body>
     <header>
       <div>
         <p class="eyebrow">LOCAL-FIRST POWER OBSERVABILITY</p>
         <h1>PowerSite Sentinel</h1>
-        <p class="subtitle">Evidence-backed health, power flow, and incident intelligence.</p>
+        <p class="subtitle">
+          Evidence-backed health, power flow, incident intelligence, and forensic history.
+        </p>
       </div>
       <button id="refresh">Refresh</button>
     </header>
@@ -19,6 +22,7 @@
       <div id="banner" class="banner">Connecting to Sentinel…</div>
       <section id="sites" class="site-grid"></section>
     </main>
+
     <template id="site-template">
       <article class="site-card">
         <button class="site-toggle" type="button" aria-expanded="false">
@@ -28,48 +32,22 @@
             <span class="site-status"></span>
           </span>
           <span class="site-heading-actions">
-            <span class="score-ring"><span class="score"></span><small>evidence health</small></span>
+            <span class="score-ring"><span class="score"></span><small>health</small></span>
             <span class="inspect-label">Inspect site <span class="chevron">⌄</span></span>
           </span>
         </button>
 
         <div class="score-row">
           <div><strong class="observability"></strong><span>controller telemetry</span></div>
-          <div><strong class="accounting"></strong><span>site accounting coverage</span></div>
           <div><strong class="controllers"></strong><span>controllers</span></div>
           <div><strong class="incidents"></strong><span>open incidents</span></div>
         </div>
 
-        <section class="metric-section">
-          <div class="section-heading">
-            <h2>Controller telemetry</h2>
-            <span class="telemetry-age"></span>
-          </div>
-          <div class="metric-grid controller-grid">
-            <div><span>Solar input</span><strong class="solar"></strong></div>
-            <div><span>Charge output</span><strong class="charge-output"></strong></div>
-            <div><span>Battery voltage</span><strong class="battery-voltage"></strong></div>
-            <div><span>Charge current</span><strong class="charge-current"></strong></div>
-            <div><span>Array voltage</span><strong class="array-voltage"></strong></div>
-            <div><span>Charge stage</span><strong class="charge-stage"></strong></div>
-            <div><span>Energy today</span><strong class="daily-energy"></strong></div>
-            <div><span>Battery temperature</span><strong class="battery-temperature"></strong></div>
-          </div>
-        </section>
-
-        <section class="metric-section accounting-section">
-          <div class="section-heading">
-            <h2>Whole-site power accounting</h2>
-            <span class="accounting-status"></span>
-          </div>
-          <div class="metric-grid accounting-grid">
-            <div><span>Battery net</span><strong class="battery"></strong></div>
-            <div><span>DC loads</span><strong class="loads"></strong></div>
-            <div><span>Battery SOC</span><strong class="battery-soc"></strong></div>
-          </div>
-          <p class="coverage-note"></p>
-        </section>
-
+        <div class="flow-grid">
+          <div><span>Solar</span><strong class="solar"></strong></div>
+          <div><span>Battery net</span><strong class="battery"></strong></div>
+          <div><span>DC loads</span><strong class="loads"></strong></div>
+        </div>
         <p class="explanation"></p>
         <div class="findings"></div>
 
@@ -90,7 +68,7 @@
           <section class="detail-section">
             <div class="detail-section-heading">
               <h3>Controllers</h3>
-              <span>Click a controller for identity, connection, raw registers, history and polling.</span>
+              <span>Physical-controller inventory. Click a controller for current identity and connection evidence.</span>
             </div>
             <div class="controller-list"></div>
           </section>
@@ -99,6 +77,10 @@
             <div class="detail-section-heading">
               <h3>Normalized site metrics</h3>
               <span>Measured/source-backed metrics are shown first; unsupported instrumentation is hidden by default.</span>
+            </div>
+            <div class="metric-visibility">
+              <span class="metric-visibility-summary"></span>
+              <button class="secondary-button metric-visibility-toggle" type="button" hidden></button>
             </div>
             <div class="table-scroll">
               <table class="detail-table">
@@ -121,8 +103,26 @@
             </section>
           </section>
         </section>
+
+        <section class="forensic-panel">
+          <div class="section-heading">
+            <div>
+              <p class="section-title">Flight recorder</p>
+              <p class="forensic-period mono"></p>
+            </div>
+            <span class="forensic-status"></span>
+          </div>
+          <div class="forensic-stats">
+            <div><strong class="history-coverage"></strong><span>minimum daily evidence</span></div>
+            <div><strong class="history-missing"></strong><span>missing controller-days</span></div>
+            <div><strong class="history-recovered"></strong><span>recovered controller-days</span></div>
+            <div><strong class="energy-discrepancies"></strong><span>energy discrepancy days</span></div>
+          </div>
+          <div class="timeline-preview"></div>
+        </section>
       </article>
     </template>
+
     <script type="module" src="/assets/app.js"></script>
   </body>
 </html>

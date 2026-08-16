@@ -3,54 +3,69 @@ const banner = document.querySelector('#banner');
 const template = document.querySelector('#site-template');
 const refreshButton = document.querySelector('#refresh');
 
-const openSites = new Set();
-const openControllers = new Set();
-const controllerDetailCache = new Map();
+const siteViews = new Map();
+const forensicCache = new Map();
+const FORENSIC_CACHE_MS = 5 * 60 * 1000;
+const LIVE_REFRESH_MS = 15 * 1000;
+let refreshInFlight = null;
 
 const metricValue = (metric) => (
   metric && typeof metric === 'object' && Number.isFinite(metric.value) ? metric.value : null
 );
 
-const formatNumber = (value, unit, digits = 1, missing = 'unmeasured') => {
+function setText(node, value) {
+  if (!node) return;
+  const next = value === null || value === undefined ? '—' : String(value);
+  if (node.textContent === next) return;
+  node.textContent = next;
+  node.classList.remove('live-update-flash');
+  void node.offsetWidth;
+  node.classList.add('live-update-flash');
+}
+
+function formatNumber(value, unit = '', digits = 1, missing = 'unmeasured') {
   if (!Number.isFinite(value)) return missing;
   const rounded = Math.abs(value) >= 100 ? Math.round(value).toString() : value.toFixed(digits);
   return unit ? `${rounded} ${unit}` : rounded;
-};
+}
 
-const formatPower = (metric, missing = 'unmeasured') => {
+function formatPower(metric, missing = 'unmeasured') {
   const value = metricValue(metric);
   if (value === null) return missing;
   const magnitude = Math.abs(value);
   const digits = magnitude > 0 && magnitude < 1 ? 2 : magnitude < 10 ? 1 : 0;
   return formatNumber(value, metric?.unit || 'W', digits, missing);
-};
+}
 
-const formatMetric = (metric, fallbackUnit = '', digits = 1, missing = 'unmeasured') => (
-  formatNumber(metricValue(metric), metric?.unit || fallbackUnit, digits, missing)
-);
+function formatMetric(metric, fallbackUnit = '', digits = 1, missing = 'unmeasured') {
+  return formatNumber(metricValue(metric), metric?.unit || fallbackUnit, digits, missing);
+}
 
-const formatStateMetric = (metric, missing = 'unmeasured') => {
+function formatStateMetric(metric, missing = 'unmeasured') {
   const value = metric?.value;
   if (Array.isArray(value)) return value.length ? value.join(', ') : 'clear';
   if (value === null || value === undefined || value === '') return missing;
   return String(value);
-};
+}
 
-const relativeAge = (timestamp) => {
+function relativeAge(timestamp) {
   if (!timestamp) return 'no timestamp';
   const time = Date.parse(timestamp);
   if (!Number.isFinite(time)) return 'unknown age';
   const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  return `${(seconds / 3600).toFixed(1)}h ago`;
-};
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h ago`;
+  return `${(seconds / 86400).toFixed(1)}d ago`;
+}
 
-const labelize = (value) => String(value)
-  .replaceAll('_', ' ')
-  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+function labelize(value) {
+  return String(value)
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
-const displayValue = (value) => {
+function displayValue(value) {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
   if (typeof value === 'number') {
@@ -67,7 +82,7 @@ const displayValue = (value) => {
   }
   if (typeof value === 'object') return 'structured data';
   return String(value);
-};
+}
 
 async function json(path) {
   const response = await fetch(path, {
@@ -78,19 +93,70 @@ async function json(path) {
   return response.json();
 }
 
-function renderFinding(item) {
-  const row = document.createElement('div');
-  row.className = `finding ${item.severity}`;
-  const title = document.createElement('strong');
-  title.textContent = String(item.title ?? 'Finding');
-  const summary = document.createElement('span');
-  summary.textContent = String(item.summary ?? '');
-  row.append(title, summary);
-  return row;
+async function getForensics(uid, force = false) {
+  const cached = forensicCache.get(uid);
+  if (!force && cached && Date.now() - cached.fetchedAt < FORENSIC_CACHE_MS) {
+    return cached.payload;
+  }
+  const payload = await json(`/v1/sites/${encodeURIComponent(uid)}/forensics?days=30`);
+  forensicCache.set(uid, { fetchedAt: Date.now(), payload });
+  return payload;
+}
+
+function controllerUid(controller) {
+  return String(controller?.controller_uid || controller?.controller_id || '');
+}
+
+function controllerIdentityKey(controller) {
+  const serial = String(controller?.serial_number || '').trim().toLowerCase();
+  const profile = String(controller?.profile || controller?.family || '').trim().toLowerCase();
+  if (serial) return `serial:${profile}:${serial}`;
+
+  const currentDeviceId = String(controller?.current_device_id || '').trim();
+  if (currentDeviceId) return `device:${currentDeviceId}`;
+
+  const connection = controller?.current_connection;
+  if (connection && typeof connection === 'object') {
+    const transport = String(connection.transport || '').trim();
+    const target = String(connection.target || '').trim();
+    const unit = String(connection.unit_id ?? '').trim();
+    if (transport || target || unit) return `connection:${transport}:${target}:${unit}`;
+  }
+
+  const uid = controllerUid(controller);
+  return uid ? `uid:${uid}` : `anonymous:${JSON.stringify(controller)}`;
+}
+
+function controllerPreference(controller) {
+  const online = String(controller?.status || '').toLowerCase() === 'online' ? 1 : 0;
+  const seen = Date.parse(controller?.last_seen || controller?.updated_at || '') || 0;
+  const identified = controller?.serial_number ? 1 : 0;
+  return [online, identified, seen];
+}
+
+function preferController(candidate, current) {
+  if (!current) return candidate;
+  const left = controllerPreference(candidate);
+  const right = controllerPreference(current);
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] > right[index]) return candidate;
+    if (left[index] < right[index]) return current;
+  }
+  return current;
+}
+
+function dedupeControllers(controllers) {
+  const unique = new Map();
+  for (const controller of Array.isArray(controllers) ? controllers : []) {
+    if (!controller || typeof controller !== 'object') continue;
+    const key = controllerIdentityKey(controller);
+    unique.set(key, preferController(controller, unique.get(key)));
+  }
+  return [...unique.values()];
 }
 
 function controllerStatus(controllers) {
-  if (!Array.isArray(controllers) || !controllers.length) return 'No controller inventory';
+  if (!controllers.length) return 'No controller inventory';
   const online = controllers.filter(
     (item) => String(item?.status || '').toLowerCase() === 'online',
   ).length;
@@ -100,68 +166,42 @@ function controllerStatus(controllers) {
   return `${online}/${controllers.length} controllers online`;
 }
 
-function accountingGapText(flow) {
-  const missing = [];
-  if (metricValue(flow.battery?.net_power_w) === null) missing.push('battery net flow');
-  if (metricValue(flow.loads?.dc_power_w) === null) missing.push('DC load power');
-  if (metricValue(flow.battery?.soc_percent) === null) missing.push('battery SOC');
-  if (!missing.length) {
-    return 'Core whole-site measurements are source-backed and currently available.';
-  }
-  return `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not directly measured by the current instrumentation. Add source-backed shunt/load measurements to enable full-site accounting.`;
-}
-
-function appendFact(root, label, value) {
-  const item = document.createElement('div');
-  item.className = 'fact';
-  const name = document.createElement('span');
-  name.textContent = label;
-  const content = document.createElement('strong');
-  content.textContent = displayValue(value);
-  item.append(name, content);
-  root.append(item);
-}
-
-function flattenRecord(record, prefix = '', depth = 0) {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) return [];
-  const output = [];
-  for (const [key, value] of Object.entries(record)) {
-    const label = prefix ? `${prefix} · ${labelize(key)}` : labelize(key);
-    if (value && typeof value === 'object' && !Array.isArray(value) && depth < 1) {
-      output.push(...flattenRecord(value, label, depth + 1));
-    } else {
-      output.push([label, value]);
+function syncFacts(root, entries) {
+  const wanted = new Set();
+  for (const [key, label, value] of entries) {
+    wanted.add(key);
+    let item = [...root.children].find((child) => child.dataset.factKey === key);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'fact';
+      item.dataset.factKey = key;
+      const name = document.createElement('span');
+      const content = document.createElement('strong');
+      item.append(name, content);
     }
+    setText(item.querySelector('span'), label);
+    setText(item.querySelector('strong'), displayValue(value));
+    root.append(item);
   }
-  return output;
+  for (const child of [...root.children]) {
+    if (child.dataset.factKey && !wanted.has(child.dataset.factKey)) child.remove();
+  }
 }
 
-function renderFacts(root, record, preferred = []) {
-  root.replaceChildren();
-  if (!record || typeof record !== 'object') {
-    appendFact(root, 'State', 'unavailable');
-    return;
-  }
+function primitiveFactEntries(record, preferred = []) {
+  if (!record || typeof record !== 'object') return [];
+  const entries = [];
   const used = new Set();
   for (const key of preferred) {
     if (!(key in record)) continue;
-    appendFact(root, labelize(key), record[key]);
+    entries.push([key, labelize(key), record[key]]);
     used.add(key);
   }
   for (const [key, value] of Object.entries(record)) {
     if (used.has(key) || (value && typeof value === 'object')) continue;
-    appendFact(root, labelize(key), value);
+    entries.push([key, labelize(key), value]);
   }
-}
-
-function renderFlatFacts(root, record, limit = 24) {
-  root.replaceChildren();
-  const entries = flattenRecord(record).slice(0, limit);
-  if (!entries.length) {
-    appendFact(root, 'State', 'No data reported');
-    return;
-  }
-  entries.forEach(([label, value]) => appendFact(root, label, value));
+  return entries;
 }
 
 function normalizedMetricObserved(metric) {
@@ -179,257 +219,166 @@ function formatNormalizedMetric(metric) {
   return 'unmeasured';
 }
 
-function appendMetricRow(root, name, metric, hidden = false) {
-  const row = document.createElement('tr');
-  row.hidden = hidden;
-  if (hidden) row.className = 'unmeasured-row';
-  const sources = Array.isArray(metric?.sources)
-    ? metric.sources.length
-    : Number(metric?.contributors ?? 0);
-  const expected = Number(metric?.expected_contributors ?? 0);
-  const sourceText = expected > 0 ? `${sources}/${expected}` : String(sources || '—');
-  [labelize(name), formatNormalizedMetric(metric), metric?.quality || metric?.status || '—', sourceText]
-    .forEach((value) => {
-      const cell = document.createElement('td');
-      cell.textContent = String(value);
-      row.append(cell);
-    });
-  root.append(row);
+function ensureMetricRow(view, name) {
+  let row = view.metricRows.get(name);
+  if (row) return row;
+  row = document.createElement('tr');
+  row.dataset.metricName = name;
+  for (let index = 0; index < 4; index += 1) row.append(document.createElement('td'));
+  view.refs.siteMetrics.append(row);
+  view.metricRows.set(name, row);
   return row;
 }
 
-function renderSiteMetrics(root, metrics) {
-  root.replaceChildren();
+function syncMetrics(view, metrics) {
   const entries = Object.entries(metrics || {});
   const measured = entries.filter(([, metric]) => normalizedMetricObserved(metric));
   const unmeasured = entries.filter(([, metric]) => !normalizedMetricObserved(metric));
+  const wanted = new Set(entries.map(([name]) => name));
 
-  measured.forEach(([name, metric]) => appendMetricRow(root, name, metric));
-  const hiddenRows = unmeasured.map(([name, metric]) => appendMetricRow(root, name, metric, true));
-
-  if (unmeasured.length) {
-    const controlRow = document.createElement('tr');
-    controlRow.className = 'metric-toggle-row';
-    const cell = document.createElement('td');
-    cell.colSpan = 4;
-    const control = document.createElement('div');
-    control.className = 'metric-visibility';
-    const summary = document.createElement('span');
-    summary.textContent = `${measured.length} measured/observed metrics shown · ${unmeasured.length} unsupported or unmeasured hidden`;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'secondary-button';
-    let shown = false;
-    button.textContent = `Show ${unmeasured.length} unmeasured`;
-    button.addEventListener('click', () => {
-      shown = !shown;
-      hiddenRows.forEach((row) => { row.hidden = !shown; });
-      button.textContent = shown ? 'Hide unmeasured' : `Show ${unmeasured.length} unmeasured`;
-    });
-    control.append(summary, button);
-    cell.append(control);
-    controlRow.append(cell);
-    root.append(controlRow);
+  for (const [name, metric] of [...measured, ...unmeasured]) {
+    const row = ensureMetricRow(view, name);
+    const sources = Array.isArray(metric?.sources)
+      ? metric.sources.length
+      : Number(metric?.contributors ?? 0);
+    const expected = Number(metric?.expected_contributors ?? 0);
+    const sourceText = expected > 0 ? `${sources}/${expected}` : String(sources || '—');
+    const values = [
+      labelize(name),
+      formatNormalizedMetric(metric),
+      metric?.quality || metric?.status || '—',
+      sourceText,
+    ];
+    [...row.children].forEach((cell, index) => setText(cell, values[index]));
+    const hidden = !normalizedMetricObserved(metric) && !view.showUnmeasured;
+    row.hidden = hidden;
+    row.classList.toggle('unmeasured-row', !normalizedMetricObserved(metric));
+    view.refs.siteMetrics.append(row);
   }
 
-  if (!entries.length) {
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 4;
-    cell.textContent = 'No normalized site metrics are available.';
-    row.append(cell);
-    root.append(row);
+  for (const [name, row] of [...view.metricRows.entries()]) {
+    if (wanted.has(name)) continue;
+    row.remove();
+    view.metricRows.delete(name);
   }
+
+  setText(
+    view.refs.metricVisibilitySummary,
+    unmeasured.length
+      ? `${measured.length} measured/observed metrics shown · ${unmeasured.length} unsupported or unmeasured ${view.showUnmeasured ? 'shown' : 'hidden'}`
+      : `${measured.length} measured/observed metrics shown`,
+  );
+  view.refs.metricVisibilityToggle.hidden = unmeasured.length === 0;
+  setText(
+    view.refs.metricVisibilityToggle,
+    view.showUnmeasured ? 'Hide unmeasured' : `Show ${unmeasured.length} unmeasured`,
+  );
 }
 
-function formatLedgerField(field) {
-  if (!field || typeof field !== 'object' || !Number.isFinite(field.value)) return null;
-  const digits = Math.abs(field.value) >= 100 ? 0 : 2;
-  return formatNumber(field.value, field.unit || '', digits, '');
-}
-
-function renderEnergyLedger(root, ledger) {
-  root.replaceChildren();
-  if (!ledger || typeof ledger !== 'object') {
-    appendFact(root, 'State', 'No energy ledger reported');
-    return;
-  }
-
-  appendFact(root, 'Period', ledger.period || 'unknown');
-  appendFact(root, 'Quality', ledger.quality || 'unknown');
-
-  let missing = 0;
-  const missingReasons = [];
+function ledgerEntries(ledger) {
+  if (!ledger || typeof ledger !== 'object') return [];
+  const entries = [
+    ['period', 'Period', ledger.period || 'unknown'],
+    ['quality', 'Quality', ledger.quality || 'unknown'],
+  ];
   for (const [groupName, group] of Object.entries({
     flows: ledger.flows || {},
     counters: ledger.counters || {},
   })) {
     for (const [name, field] of Object.entries(group)) {
-      const formatted = formatLedgerField(field);
-      if (formatted !== null) {
-        appendFact(root, `${labelize(groupName)} · ${labelize(name)}`, formatted);
-      } else {
-        missing += 1;
-        const reason = field && typeof field === 'object' ? field.reason : null;
-        if (reason) missingReasons.push(`${labelize(name)}: ${reason}`);
-      }
+      if (!field || typeof field !== 'object' || !Number.isFinite(field.value)) continue;
+      const digits = Math.abs(field.value) >= 100 ? 0 : 2;
+      entries.push([
+        `${groupName}.${name}`,
+        `${labelize(groupName)} · ${labelize(name)}`,
+        formatNumber(field.value, field.unit || '', digits, ''),
+      ]);
+    }
+  }
+  return entries;
+}
+
+function syncEnergyLedger(view, ledger) {
+  syncFacts(view.refs.energyLedger, ledgerEntries(ledger));
+  const missing = [];
+  for (const group of [ledger?.flows || {}, ledger?.counters || {}]) {
+    for (const [name, field] of Object.entries(group)) {
+      if (field && typeof field === 'object' && Number.isFinite(field.value)) continue;
+      missing.push(field?.reason ? `${labelize(name)}: ${field.reason}` : labelize(name));
     }
   }
 
-  if (missing) {
-    const details = document.createElement('details');
-    details.className = 'ledger-note';
-    const summary = document.createElement('summary');
-    summary.textContent = `${missing} unavailable ledger field${missing === 1 ? '' : 's'} hidden`;
-    details.append(summary);
-    if (missingReasons.length) {
-      const list = document.createElement('ul');
-      missingReasons.slice(0, 12).forEach((reason) => {
-        const item = document.createElement('li');
-        item.textContent = reason;
-        list.append(item);
-      });
-      details.append(list);
+  let note = view.refs.energyLedger.querySelector('.ledger-note');
+  if (!missing.length) {
+    note?.remove();
+    return;
+  }
+  if (!note) {
+    note = document.createElement('details');
+    note.className = 'ledger-note';
+    note.append(document.createElement('summary'), document.createElement('ul'));
+    view.refs.energyLedger.append(note);
+  }
+  setText(note.querySelector('summary'), `${missing.length} unavailable ledger field${missing.length === 1 ? '' : 's'} hidden`);
+  const list = note.querySelector('ul');
+  const signature = JSON.stringify(missing.slice(0, 12));
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    list.replaceChildren();
+    for (const reason of missing.slice(0, 12)) {
+      const item = document.createElement('li');
+      item.textContent = reason;
+      list.append(item);
     }
-    root.append(details);
   }
 }
 
-function renderEvents(root, payload) {
-  root.replaceChildren();
-  const events = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload?.events) ? payload.events : [];
-  if (!events.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-detail';
-    empty.textContent = 'No recent site events were reported.';
-    root.append(empty);
-    return;
-  }
-
-  events.slice(0, 10).forEach((event) => {
-    const item = document.createElement('div');
-    item.className = 'event-item';
-    const title = document.createElement('strong');
-    title.textContent = labelize(
-      event.title || event.code || event.event_type || event.type || event.event || 'Site event',
+function syncEvents(root, events) {
+  const rows = Array.isArray(events) ? events.slice(0, 10) : [];
+  const wanted = new Set();
+  for (const event of rows) {
+    const key = String(
+      event.id
+      ?? event.dedupe_key
+      ?? `${event.observed_at || event.created_at || ''}:${event.event_type || event.type || ''}:${event.message || ''}`,
     );
-    const meta = document.createElement('span');
+    wanted.add(key);
+    let item = [...root.children].find((child) => child.dataset.eventKey === key);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'event-item';
+      item.dataset.eventKey = key;
+      item.append(document.createElement('strong'), document.createElement('span'), document.createElement('p'));
+    }
+    const title = event.title || event.code || event.event_type || event.type || event.event || 'Site event';
     const timestamp = event.observed_at || event.created_at || event.timestamp || event.at;
     const severity = event.severity ? `${String(event.severity).toUpperCase()} · ` : '';
-    meta.textContent = timestamp
-      ? `${severity}${relativeAge(timestamp)} · ${timestamp}`
-      : `${severity}Timestamp unavailable`;
-    const summary = document.createElement('p');
-    summary.textContent = String(event.summary || event.message || event.detail || event.status || '');
-    item.append(title, meta);
-    if (summary.textContent) item.append(summary);
+    setText(item.querySelector('strong'), labelize(title));
+    setText(item.querySelector('span'), timestamp ? `${severity}${relativeAge(timestamp)} · ${timestamp}` : `${severity}Timestamp unavailable`);
+    const summary = item.querySelector('p');
+    setText(summary, event.summary || event.message || event.detail || event.status || '');
+    summary.hidden = !summary.textContent;
     root.append(item);
-  });
-}
-
-function controllerUid(controller) {
-  return String(controller?.controller_uid || controller?.controller_id || '');
-}
-
-function renderConnections(root, connections) {
-  root.replaceChildren();
-  if (!Array.isArray(connections) || !connections.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-detail';
-    empty.textContent = 'No connection history reported.';
-    root.append(empty);
-    return;
-  }
-  const wrapper = document.createElement('div');
-  wrapper.className = 'table-scroll';
-  const table = document.createElement('table');
-  table.className = 'detail-table';
-  table.innerHTML = '<thead><tr><th>Role</th><th>Transport</th><th>Target</th><th>Unit</th><th>Status</th><th>Last seen</th></tr></thead>';
-  const body = document.createElement('tbody');
-  connections.forEach((connection) => {
-    const row = document.createElement('tr');
-    [
-      connection.role || (connection.active ? 'current' : 'previous'),
-      connection.transport,
-      connection.target,
-      connection.unit_id,
-      connection.status || (connection.active ? 'online' : 'inactive'),
-      connection.last_seen,
-    ].forEach((value) => {
-      const cell = document.createElement('td');
-      cell.textContent = displayValue(value);
-      row.append(cell);
-    });
-    body.append(row);
-  });
-  table.append(body);
-  wrapper.append(table);
-  root.append(wrapper);
-}
-
-function renderRegisters(root, latest) {
-  root.replaceChildren();
-  const values = Array.isArray(latest?.values) ? latest.values : [];
-  if (!values.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-detail';
-    empty.textContent = latest?.error || 'No latest register sample is available.';
-    root.append(empty);
-    return;
-  }
-  const wrapper = document.createElement('div');
-  wrapper.className = 'table-scroll register-table';
-  const table = document.createElement('table');
-  table.className = 'detail-table';
-  table.innerHTML = '<thead><tr><th>Register</th><th>Value</th><th>Unit</th><th>Raw</th><th>Address</th></tr></thead>';
-  const body = document.createElement('tbody');
-  values.forEach((register) => {
-    const row = document.createElement('tr');
-    [
-      register.register_name || register.name,
-      register.value,
-      register.unit,
-      register.raw,
-      register.address,
-    ].forEach((value) => {
-      const cell = document.createElement('td');
-      cell.textContent = displayValue(value);
-      row.append(cell);
-    });
-    body.append(row);
-  });
-  table.append(body);
-  wrapper.append(table);
-  root.append(wrapper);
-}
-
-function makeDetailSection(titleText) {
-  const section = document.createElement('section');
-  section.className = 'controller-detail-section';
-  const title = document.createElement('h4');
-  title.textContent = titleText;
-  section.append(title);
-  return section;
-}
-
-function renderControllerDetail(panel, detail) {
-  panel.replaceChildren();
-  const snapshot = detail?.snapshot || {};
-  const controller = snapshot.controller || {};
-
-  if (detail?.upstream?.stale) {
-    const stale = document.createElement('p');
-    stale.className = 'detail-warning';
-    stale.textContent = 'Showing last-known-good controller detail while the upstream API reconnects.';
-    panel.append(stale);
   }
 
-  const identitySection = makeDetailSection('Controller identity');
-  const identityFacts = document.createElement('div');
-  identityFacts.className = 'fact-grid compact-facts';
-  renderFacts(identityFacts, controller, [
+  for (const child of [...root.children]) {
+    if (child.dataset.eventKey && !wanted.has(child.dataset.eventKey)) child.remove();
+  }
+  if (!rows.length) {
+    let empty = root.querySelector('.empty-detail');
+    if (!empty) {
+      empty = document.createElement('p');
+      empty.className = 'empty-detail';
+      root.append(empty);
+    }
+    setText(empty, 'No recent site events were reported.');
+  } else {
+    root.querySelector('.empty-detail')?.remove();
+  }
+}
+
+function controllerFactEntries(controller) {
+  const entries = primitiveFactEntries(controller, [
     'controller_uid',
     'controller_id',
     'model',
@@ -443,314 +392,423 @@ function renderControllerDetail(panel, detail) {
     'connection_count',
     'active_connection_count',
   ]);
-  identitySection.append(identityFacts);
-  panel.append(identitySection);
+  const connection = controller?.current_connection;
+  if (connection && typeof connection === 'object') {
+    for (const [key, value] of Object.entries(connection)) {
+      if (value && typeof value === 'object') continue;
+      entries.push([`connection.${key}`, `Connection · ${labelize(key)}`, value]);
+    }
+  }
+  return entries;
+}
 
-  const currentSection = makeDetailSection('Current connection');
-  const currentFacts = document.createElement('div');
-  currentFacts.className = 'fact-grid compact-facts';
-  renderFlatFacts(currentFacts, controller.current_connection || {}, 20);
-  currentSection.append(currentFacts);
-  panel.append(currentSection);
+function ensureControllerView(siteView, key) {
+  let controllerView = siteView.controllerViews.get(key);
+  if (controllerView) return controllerView;
 
-  const connectionSection = makeDetailSection('Connection history');
-  const connections = document.createElement('div');
-  renderConnections(connections, controller.connections);
-  connectionSection.append(connections);
-  panel.append(connectionSection);
+  const item = document.createElement('article');
+  item.className = 'controller-inspector';
+  item.dataset.controllerKey = key;
+  const toggle = document.createElement('button');
+  toggle.className = 'controller-toggle';
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', 'false');
+  const identity = document.createElement('span');
+  identity.className = 'controller-identity';
+  identity.append(document.createElement('strong'), document.createElement('span'));
+  const action = document.createElement('span');
+  action.className = 'controller-action';
+  const state = document.createElement('span');
+  state.className = 'status-pill';
+  const chevron = document.createElement('span');
+  chevron.className = 'controller-chevron';
+  chevron.textContent = '⌄';
+  action.append(state, chevron);
+  toggle.append(identity, action);
 
-  const latestSection = makeDetailSection('Latest raw register sample');
-  const sampleMeta = document.createElement('p');
-  sampleMeta.className = 'detail-meta';
-  sampleMeta.textContent = snapshot.latest?.observed_at
-    ? `Observed ${relativeAge(snapshot.latest.observed_at)} · ${snapshot.latest.observed_at}`
-    : 'Latest sample timestamp unavailable.';
-  const registers = document.createElement('div');
-  renderRegisters(registers, snapshot.latest);
-  latestSection.append(sampleMeta, registers);
-  panel.append(latestSection);
+  const detail = document.createElement('div');
+  detail.className = 'controller-detail';
+  detail.hidden = true;
+  const title = document.createElement('h4');
+  title.textContent = 'Controller identity & connection';
+  const facts = document.createElement('div');
+  facts.className = 'fact-grid';
+  detail.append(title, facts);
 
-  const historySection = makeDetailSection('History & collection quality');
-  const historyColumns = document.createElement('div');
-  historyColumns.className = 'detail-columns controller-history-columns';
-  [
-    ['History summary', snapshot.history_summary],
-    ['Daily summary', snapshot.daily_summary],
-    ['History coverage', snapshot.history_coverage],
-    ['Polling performance', snapshot.polling_performance],
-  ].forEach(([titleText, record]) => {
-    const block = document.createElement('div');
-    block.className = 'subdetail-card';
-    const title = document.createElement('strong');
-    title.textContent = titleText;
-    const facts = document.createElement('div');
-    facts.className = 'fact-grid mini-facts';
-    renderFlatFacts(facts, record, 18);
-    block.append(title, facts);
-    historyColumns.append(block);
+  toggle.addEventListener('click', () => {
+    detail.hidden = !detail.hidden;
+    toggle.setAttribute('aria-expanded', String(!detail.hidden));
+    chevron.textContent = detail.hidden ? '⌄' : '⌃';
   });
-  historySection.append(historyColumns);
-  panel.append(historySection);
+
+  item.append(toggle, detail);
+  siteView.refs.controllerList.append(item);
+  controllerView = { item, toggle, identity, state, chevron, detail, facts };
+  siteView.controllerViews.set(key, controllerView);
+  return controllerView;
 }
 
-async function loadControllerDetail(controllerUidValue, panel) {
-  if (controllerDetailCache.has(controllerUidValue)) {
-    renderControllerDetail(panel, controllerDetailCache.get(controllerUidValue));
-    return;
-  }
-  panel.replaceChildren();
-  const loading = document.createElement('p');
-  loading.className = 'empty-detail';
-  loading.textContent = 'Loading controller identity, registers, history and polling details…';
-  panel.append(loading);
-  try {
-    const detail = await json(`/v1/controllers/${encodeURIComponent(controllerUidValue)}/detail`);
-    controllerDetailCache.set(controllerUidValue, detail);
-    if (openControllers.has(controllerUidValue)) renderControllerDetail(panel, detail);
-  } catch (error) {
-    panel.replaceChildren();
-    const failure = document.createElement('p');
-    failure.className = 'detail-warning';
-    failure.textContent = `Could not load controller detail: ${error.message}`;
-    panel.append(failure);
-  }
-}
-
-function renderControllerList(root, controllers) {
-  root.replaceChildren();
-  if (!Array.isArray(controllers) || !controllers.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-detail';
-    empty.textContent = 'No controllers are enrolled in this site.';
-    root.append(empty);
-    return;
-  }
-
-  controllers.forEach((controller) => {
+function syncControllers(siteView, controllers) {
+  const wanted = new Set();
+  for (const controller of controllers) {
+    const key = controllerIdentityKey(controller);
+    wanted.add(key);
+    const controllerView = ensureControllerView(siteView, key);
     const uid = controllerUid(controller);
-    const item = document.createElement('article');
-    item.className = 'controller-inspector';
-    const toggle = document.createElement('button');
-    toggle.className = 'controller-toggle';
-    toggle.type = 'button';
-    const expanded = openControllers.has(uid);
-    toggle.setAttribute('aria-expanded', String(expanded));
+    const name = controller.model || controller.family || controller.profile || uid || 'Controller';
+    setText(controllerView.identity.querySelector('strong'), name);
+    setText(
+      controllerView.identity.querySelector('span'),
+      [controller.serial_number, controller.profile, uid].filter(Boolean).join(' · '),
+    );
+    const state = String(controller.status || 'unknown').toLowerCase();
+    controllerView.state.className = `status-pill ${state}`;
+    setText(controllerView.state, state);
+    syncFacts(controllerView.facts, controllerFactEntries(controller));
+    siteView.refs.controllerList.append(controllerView.item);
+  }
 
-    const identity = document.createElement('span');
-    identity.className = 'controller-identity';
-    const name = document.createElement('strong');
-    name.textContent = String(controller.model || controller.family || controller.profile || uid || 'Controller');
-    const meta = document.createElement('span');
-    meta.textContent = [controller.serial_number, controller.profile, uid].filter(Boolean).join(' · ');
-    identity.append(name, meta);
+  for (const [key, controllerView] of [...siteView.controllerViews.entries()]) {
+    if (wanted.has(key)) continue;
+    controllerView.item.remove();
+    siteView.controllerViews.delete(key);
+  }
 
-    const state = document.createElement('span');
-    state.className = `status-pill ${String(controller.status || 'unknown').toLowerCase()}`;
-    state.textContent = String(controller.status || 'unknown');
-    const chevron = document.createElement('span');
-    chevron.className = 'controller-chevron';
-    chevron.textContent = expanded ? '⌃' : '⌄';
-    const action = document.createElement('span');
-    action.className = 'controller-action';
-    action.append(state, chevron);
-    toggle.append(identity, action);
-
-    const panel = document.createElement('div');
-    panel.className = 'controller-detail';
-    panel.hidden = !expanded;
-    toggle.addEventListener('click', () => {
-      const next = panel.hidden;
-      panel.hidden = !next;
-      toggle.setAttribute('aria-expanded', String(next));
-      chevron.textContent = next ? '⌃' : '⌄';
-      if (next) {
-        openControllers.add(uid);
-        loadControllerDetail(uid, panel);
-      } else {
-        openControllers.delete(uid);
-      }
-    });
-
-    item.append(toggle, panel);
-    root.append(item);
-    if (expanded) loadControllerDetail(uid, panel);
-  });
+  if (!controllers.length) {
+    let empty = siteView.refs.controllerList.querySelector('.empty-detail');
+    if (!empty) {
+      empty = document.createElement('p');
+      empty.className = 'empty-detail';
+      siteView.refs.controllerList.append(empty);
+    }
+    setText(empty, 'No controllers are currently enrolled in this site.');
+  } else {
+    siteView.refs.controllerList.querySelector('.empty-detail')?.remove();
+  }
 }
 
-function renderSiteDetails(fragment, site, assessment) {
-  const snapshot = assessment.snapshot || {};
-  const controllers = Array.isArray(snapshot.controllers) ? snapshot.controllers : [];
-  const siteRecord = { ...(snapshot.site || site || {}), controller_count: controllers.length };
-  const latest = snapshot.latest || {};
-  const detailRoot = fragment.querySelector('.site-details');
-  fragment.querySelector('.assessed-at').textContent = assessment.assessed_at
-    ? `Assessed ${relativeAge(assessment.assessed_at)}`
-    : 'Assessment time unavailable';
+function findingKey(item, index) {
+  return String(item.fingerprint || `${item.code || item.title || 'finding'}:${index}`);
+}
 
-  const siteFacts = fragment.querySelector('.site-facts');
-  renderFacts(siteFacts, siteRecord, [
+function syncFindings(root, findings, accountingLimited) {
+  const visible = (findings || []).filter((item) => item.severity !== 'info').slice(0, 4);
+  const wanted = new Set();
+
+  visible.forEach((finding, index) => {
+    const key = findingKey(finding, index);
+    wanted.add(key);
+    let row = [...root.children].find((child) => child.dataset.findingKey === key);
+    if (!row) {
+      row = document.createElement('div');
+      row.dataset.findingKey = key;
+      row.append(document.createElement('strong'), document.createElement('span'));
+    }
+    row.className = `finding ${finding.severity || 'info'}`;
+    setText(row.querySelector('strong'), finding.title || 'Finding');
+    setText(row.querySelector('span'), finding.summary || '');
+    root.append(row);
+  });
+
+  if (!visible.length) {
+    const key = 'clear';
+    wanted.add(key);
+    let clear = [...root.children].find((child) => child.dataset.findingKey === key);
+    if (!clear) {
+      clear = document.createElement('div');
+      clear.dataset.findingKey = key;
+      clear.className = 'finding clear';
+    }
+    setText(
+      clear,
+      accountingLimited
+        ? 'No evidence-backed warning or critical finding is active in controller telemetry; whole-site accounting remains partially instrumented.'
+        : 'No evidence-backed warning or critical finding is active.',
+    );
+    root.append(clear);
+  }
+
+  for (const child of [...root.children]) {
+    if (child.dataset.findingKey && !wanted.has(child.dataset.findingKey)) child.remove();
+  }
+}
+
+function ensureForensicTimelineEvent(root, key) {
+  let row = [...root.children].find((child) => child.dataset.timelineKey === key);
+  if (row) return row;
+  row = document.createElement('div');
+  row.className = 'timeline-event';
+  row.dataset.timelineKey = key;
+  const top = document.createElement('div');
+  top.className = 'timeline-event-heading';
+  top.append(document.createElement('strong'), document.createElement('span'));
+  top.querySelector('span').className = 'mono';
+  row.append(top, document.createElement('span'));
+  root.append(row);
+  return row;
+}
+
+function syncForensics(view, forensic) {
+  const period = forensic?.period ?? {};
+  const summary = forensic?.summary ?? {};
+  setText(
+    view.refs.forensicPeriod,
+    period.from && period.to ? `${period.from} → ${period.to}` : 'history unavailable',
+  );
+
+  if (forensic?.error) {
+    setText(view.refs.forensicStatus, 'unavailable');
+    view.refs.forensicStatus.className = 'forensic-status bad';
+    setText(view.refs.historyCoverage, '—');
+    setText(view.refs.historyMissing, '—');
+    setText(view.refs.historyRecovered, '—');
+    setText(view.refs.energyDiscrepancies, '—');
+    const key = 'forensic-error';
+    const row = ensureForensicTimelineEvent(view.refs.timelinePreview, key);
+    row.className = 'timeline-event warning';
+    setText(row.querySelector('strong'), 'Historical diagnostics unavailable');
+    setText(row.querySelector('.mono'), '');
+    setText(row.lastElementChild, forensic.error);
+    for (const child of [...view.refs.timelinePreview.children]) {
+      if (child.dataset.timelineKey && child.dataset.timelineKey !== key) child.remove();
+    }
+    return;
+  }
+
+  const missing = summary.missing_controller_days ?? 0;
+  const discrepancies = summary.energy_discrepancy_controller_days ?? 0;
+  setText(view.refs.forensicStatus, missing || discrepancies ? 'attention' : 'continuous');
+  view.refs.forensicStatus.className = `forensic-status ${missing || discrepancies ? 'warn' : 'good'}`;
+  const coverage = summary.minimum_daily_evidence_percent;
+  setText(view.refs.historyCoverage, Number.isFinite(coverage) ? `${coverage}%` : 'unknown');
+  setText(view.refs.historyMissing, missing);
+  setText(view.refs.historyRecovered, summary.recovered_controller_days ?? 0);
+  setText(view.refs.energyDiscrepancies, discrepancies);
+
+  const events = (forensic?.timeline?.events ?? []).slice(0, 5);
+  const wanted = new Set();
+  events.forEach((item, index) => {
+    const key = String(item.id ?? `${item.observed_at || ''}:${item.event_type || item.title || index}`);
+    wanted.add(key);
+    const row = ensureForensicTimelineEvent(view.refs.timelinePreview, key);
+    row.className = `timeline-event ${item.severity ?? 'info'}`;
+    setText(row.querySelector('strong'), item.title ?? item.event_type ?? 'Event');
+    setText(
+      row.querySelector('.mono'),
+      item.observed_at ? String(item.observed_at).replace('T', ' ').slice(0, 19) : 'unknown time',
+    );
+    setText(row.lastElementChild, item.message ?? item.event_type ?? '');
+    view.refs.timelinePreview.append(row);
+  });
+
+  if (!events.length) {
+    const key = 'forensic-clear';
+    wanted.add(key);
+    const row = ensureForensicTimelineEvent(view.refs.timelinePreview, key);
+    row.className = 'timeline-event clear';
+    setText(row.querySelector('strong'), 'No forensic timeline events in this window.');
+    setText(row.querySelector('.mono'), '');
+    setText(row.lastElementChild, '');
+  }
+
+  for (const child of [...view.refs.timelinePreview.children]) {
+    if (child.dataset.timelineKey && !wanted.has(child.dataset.timelineKey)) child.remove();
+  }
+}
+
+function createSiteView(siteUid) {
+  const fragment = template.content.cloneNode(true);
+  const card = fragment.querySelector('.site-card');
+  card.dataset.siteUid = siteUid;
+  const refs = {
+    siteToggle: fragment.querySelector('.site-toggle'),
+    siteName: fragment.querySelector('.site-name'),
+    siteId: fragment.querySelector('.site-id'),
+    siteStatus: fragment.querySelector('.site-status'),
+    score: fragment.querySelector('.score'),
+    observability: fragment.querySelector('.observability'),
+    controllers: fragment.querySelector('.controllers'),
+    incidents: fragment.querySelector('.incidents'),
+    solar: fragment.querySelector('.solar'),
+    battery: fragment.querySelector('.battery'),
+    loads: fragment.querySelector('.loads'),
+    explanation: fragment.querySelector('.explanation'),
+    findings: fragment.querySelector('.findings'),
+    siteDetails: fragment.querySelector('.site-details'),
+    inspectLabel: fragment.querySelector('.inspect-label'),
+    assessedAt: fragment.querySelector('.assessed-at'),
+    siteFacts: fragment.querySelector('.site-facts'),
+    controllerList: fragment.querySelector('.controller-list'),
+    siteMetrics: fragment.querySelector('.site-metrics'),
+    metricVisibilitySummary: fragment.querySelector('.metric-visibility-summary'),
+    metricVisibilityToggle: fragment.querySelector('.metric-visibility-toggle'),
+    energyLedger: fragment.querySelector('.energy-ledger'),
+    recentEvents: fragment.querySelector('.recent-events'),
+    forensicPeriod: fragment.querySelector('.forensic-period'),
+    forensicStatus: fragment.querySelector('.forensic-status'),
+    historyCoverage: fragment.querySelector('.history-coverage'),
+    historyMissing: fragment.querySelector('.history-missing'),
+    historyRecovered: fragment.querySelector('.history-recovered'),
+    energyDiscrepancies: fragment.querySelector('.energy-discrepancies'),
+    timelinePreview: fragment.querySelector('.timeline-preview'),
+  };
+
+  const view = {
+    siteUid,
+    card,
+    refs,
+    metricRows: new Map(),
+    controllerViews: new Map(),
+    showUnmeasured: false,
+    assessedAt: null,
+    latestObservedAt: null,
+  };
+
+  refs.siteToggle.addEventListener('click', () => {
+    refs.siteDetails.hidden = !refs.siteDetails.hidden;
+    const expanded = !refs.siteDetails.hidden;
+    refs.siteToggle.setAttribute('aria-expanded', String(expanded));
+    refs.inspectLabel.innerHTML = expanded
+      ? 'Close site <span class="chevron">⌃</span>'
+      : 'Inspect site <span class="chevron">⌄</span>';
+  });
+
+  refs.metricVisibilityToggle.addEventListener('click', () => {
+    view.showUnmeasured = !view.showUnmeasured;
+    if (view.latestMetrics) syncMetrics(view, view.latestMetrics);
+  });
+
+  sitesRoot.append(fragment);
+  siteViews.set(siteUid, view);
+  return view;
+}
+
+function updateSiteView(view, site, assessment, explanation, forensic) {
+  const health = assessment.health?.overall ?? {};
+  const snapshot = assessment.snapshot ?? {};
+  const controllers = dedupeControllers(snapshot.controllers);
+  const latest = snapshot.latest ?? {};
+  const metrics = latest.metrics ?? {};
+  const flow = snapshot.power_flow ?? {};
+  const accounting = assessment.health?.power_accounting ?? {};
+  const accountingLimited = Number(accounting.value ?? 0) < 80;
+
+  view.card.dataset.status = health.status ?? 'unknown';
+  setText(view.refs.siteName, site.name || site.system_uid || view.siteUid);
+  setText(view.refs.siteId, site.system_uid || view.siteUid);
+  setText(view.refs.siteStatus, controllerStatus(controllers));
+  setText(view.refs.score, health.value ?? '—');
+  setText(view.refs.observability, `${assessment.health?.observability?.value ?? 0}%`);
+  setText(view.refs.controllers, controllers.length);
+  setText(view.refs.incidents, assessment.open_incidents?.length ?? 0);
+  setText(view.refs.solar, formatPower(metrics.solar_input_power_w || flow.sources?.solar_input_power_w));
+  setText(view.refs.battery, formatPower(flow.battery?.net_power_w));
+  setText(view.refs.loads, formatPower(flow.loads?.dc_power_w));
+  setText(view.refs.explanation, explanation.headline || 'No explanation is currently available.');
+  syncFindings(view.refs.findings, assessment.findings, accountingLimited);
+
+  view.assessedAt = assessment.assessed_at || null;
+  view.latestObservedAt = latest.observed_at || flow.observed_at || null;
+  setText(view.refs.assessedAt, view.assessedAt ? `Assessed ${relativeAge(view.assessedAt)}` : 'Assessment time unavailable');
+
+  const siteRecord = {
+    ...(snapshot.site || site || {}),
+    controller_count: controllers.length,
+  };
+  const siteFacts = primitiveFactEntries(siteRecord, [
     'name',
     'system_uid',
     'controller_count',
     'status',
     'created_at',
     'updated_at',
+    'description',
+    'auto_discover',
   ]);
-  appendFact(siteFacts, 'Upstream', assessment.upstream?.stale ? 'stale / reconnecting' : 'reachable');
-  appendFact(siteFacts, 'Latest telemetry', latest.observed_at || 'unavailable');
-
-  renderControllerList(fragment.querySelector('.controller-list'), controllers);
-  renderSiteMetrics(fragment.querySelector('.site-metrics'), latest.metrics || {});
-  renderEnergyLedger(fragment.querySelector('.energy-ledger'), snapshot.energy_ledger || {});
-  renderEvents(fragment.querySelector('.recent-events'), snapshot.events);
-  return detailRoot;
+  siteFacts.push(['upstream', 'Upstream', assessment.upstream?.stale ? 'stale / reconnecting' : 'reachable']);
+  siteFacts.push(['latest_telemetry', 'Latest telemetry', view.latestObservedAt || 'unavailable']);
+  syncFacts(view.refs.siteFacts, siteFacts);
+  syncControllers(view, controllers);
+  view.latestMetrics = metrics;
+  syncMetrics(view, metrics);
+  syncEnergyLedger(view, snapshot.energy_ledger || {});
+  syncEvents(view.refs.recentEvents, snapshot.events);
+  syncForensics(view, forensic);
 }
 
-function renderSite(site, assessment, explanation) {
-  const fragment = template.content.cloneNode(true);
-  const card = fragment.querySelector('.site-card');
-  const health = assessment.health?.overall ?? {};
-  const observability = assessment.health?.observability ?? {};
-  const accounting = assessment.health?.power_accounting ?? {};
-  const snapshot = assessment.snapshot ?? {};
-  const latest = snapshot.latest ?? {};
-  const metrics = latest.metrics ?? {};
-  const flow = snapshot.power_flow ?? {};
-  const controllers = Array.isArray(snapshot.controllers) ? snapshot.controllers : [];
-  const physicalControllerCount = controllers.length;
-  const siteUid = String(site.system_uid || site.name || assessment.site_uid || 'site');
-
-  card.dataset.status = health.status ?? 'unknown';
-  fragment.querySelector('.site-name').textContent = site.name || site.system_uid;
-  fragment.querySelector('.site-id').textContent = site.system_uid;
-  fragment.querySelector('.site-status').textContent = controllerStatus(controllers);
-  fragment.querySelector('.score').textContent = health.value ?? '—';
-  fragment.querySelector('.observability').textContent = `${observability.value ?? 0}%`;
-  fragment.querySelector('.accounting').textContent = `${accounting.value ?? 0}%`;
-  fragment.querySelector('.controllers').textContent = String(physicalControllerCount);
-  fragment.querySelector('.incidents').textContent = assessment.open_incidents?.length ?? 0;
-
-  fragment.querySelector('.telemetry-age').textContent = relativeAge(latest.observed_at);
-  fragment.querySelector('.solar').textContent = formatPower(metrics.solar_input_power_w);
-  fragment.querySelector('.charge-output').textContent = formatPower(metrics.charge_output_power_w);
-  fragment.querySelector('.battery-voltage').textContent = formatMetric(metrics.battery_voltage_v, 'V', 2);
-  fragment.querySelector('.charge-current').textContent = formatMetric(metrics.battery_charge_current_a, 'A', 2);
-  fragment.querySelector('.array-voltage').textContent = formatMetric(metrics.array_voltage_v, 'V', 2);
-  fragment.querySelector('.charge-stage').textContent = formatStateMetric(metrics.charge_state);
-
-  const dailyWh = metricValue(metrics.daily_charge_wh);
-  const dailyKwh = metricValue(metrics.daily_charge_kwh);
-  fragment.querySelector('.daily-energy').textContent = Number.isFinite(dailyWh)
-    ? formatNumber(dailyWh, 'Wh', 0)
-    : formatNumber(dailyKwh, 'kWh', 2);
-  fragment.querySelector('.battery-temperature').textContent = formatMetric(
-    metrics.battery_temperature_c,
-    '°C',
-    1,
-  );
-
-  const batteryNet = metricValue(flow.battery?.net_power_w);
-  const dcLoads = metricValue(flow.loads?.dc_power_w);
-  const batterySoc = metricValue(flow.battery?.soc_percent);
-  const accountingGrid = fragment.querySelector('.accounting-grid');
-  const coreAccountingKnown = [batteryNet, dcLoads, batterySoc].filter(Number.isFinite).length;
-  accountingGrid.hidden = coreAccountingKnown === 0;
-  fragment.querySelector('.battery').textContent = formatMetric(flow.battery?.net_power_w, 'W', 0);
-  fragment.querySelector('.loads').textContent = formatMetric(flow.loads?.dc_power_w, 'W', 0);
-  fragment.querySelector('.battery-soc').textContent = formatMetric(flow.battery?.soc_percent, '%', 0);
-  fragment.querySelector('.accounting-status').textContent = coreAccountingKnown === 0
-    ? 'not instrumented'
-    : accounting.status || 'unknown';
-  fragment.querySelector('.coverage-note').textContent = accountingGapText(flow);
-
-  const accountingLimited = Number(accounting.value ?? 0) < 80;
-  const healthCaveat = accountingLimited
-    ? ' Whole-site electrical accounting is incomplete because some system-level measurements are not instrumented.'
-    : '';
-  fragment.querySelector('.explanation').textContent = `${explanation.headline}${healthCaveat}`;
-
-  const findingRoot = fragment.querySelector('.findings');
-  const findings = (assessment.findings ?? []).filter((item) => item.severity !== 'info').slice(0, 4);
-  if (!findings.length) {
-    const clear = document.createElement('div');
-    clear.className = 'finding clear';
-    clear.textContent = accountingLimited
-      ? 'No warning or critical finding is active in the currently observed controller telemetry; whole-site accounting remains partially instrumented.'
-      : 'No evidence-backed warning or critical finding is active.';
-    findingRoot.append(clear);
-  } else {
-    findings.forEach((item) => findingRoot.append(renderFinding(item)));
+function updateRelativeAges() {
+  for (const view of siteViews.values()) {
+    if (view.assessedAt) setText(view.refs.assessedAt, `Assessed ${relativeAge(view.assessedAt)}`);
+    for (const event of view.refs.recentEvents.querySelectorAll('.event-item')) {
+      // Event timestamps are refreshed from the network payload; avoid rewriting them here.
+      event.classList.remove('live-update-flash');
+    }
   }
-
-  const detailRoot = renderSiteDetails(fragment, site, assessment);
-  const siteToggle = fragment.querySelector('.site-toggle');
-  const inspectLabel = fragment.querySelector('.inspect-label');
-  const expanded = openSites.has(siteUid);
-  detailRoot.hidden = !expanded;
-  siteToggle.setAttribute('aria-expanded', String(expanded));
-  inspectLabel.innerHTML = expanded
-    ? 'Close site <span class="chevron">⌃</span>'
-    : 'Inspect site <span class="chevron">⌄</span>';
-
-  siteToggle.addEventListener('click', () => {
-    const next = detailRoot.hidden;
-    detailRoot.hidden = !next;
-    siteToggle.setAttribute('aria-expanded', String(next));
-    inspectLabel.innerHTML = next
-      ? 'Close site <span class="chevron">⌃</span>'
-      : 'Inspect site <span class="chevron">⌄</span>';
-    if (next) openSites.add(siteUid);
-    else openSites.delete(siteUid);
-  });
-
-  sitesRoot.append(fragment);
 }
 
-async function refresh() {
-  refreshButton.disabled = true;
-  banner.textContent = 'Refreshing site assessments…';
-  banner.className = 'banner';
-  sitesRoot.replaceChildren();
-  try {
-    const [sentinelHealth, sites] = await Promise.all([
-      json('/health'),
-      json('/v1/sites'),
-    ]);
-    if (!sites.length) {
-      banner.textContent = 'No Morningstar systems are currently reported by the upstream API.';
-      return;
-    }
-
-    let stale = sentinelHealth.upstream !== 'reachable';
-    for (const site of sites) {
-      const uid = encodeURIComponent(site.system_uid || site.name);
-      const [assessment, explanation] = await Promise.all([
-        json(`/v1/sites/${uid}/assessment`),
-        json(`/v1/sites/${uid}/explain`),
-      ]);
-      stale = stale || assessment.upstream?.stale === true;
-      renderSite(site, assessment, explanation);
-    }
-
-    if (stale) {
-      banner.textContent = `Showing last-known-good data for ${sites.length} site${sites.length === 1 ? '' : 's'} while MorningstarModbusAPI reconnects.`;
+async function refresh(forceForensics = false) {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    refreshButton.disabled = true;
+    if (!siteViews.size) {
+      banner.textContent = 'Connecting to Sentinel…';
       banner.className = 'banner';
-    } else {
-      banner.textContent = `Monitoring ${sites.length} site${sites.length === 1 ? '' : 's'}.`;
-      banner.className = 'banner ok';
     }
-  } catch (error) {
-    banner.textContent = `Sentinel could not read the upstream site model: ${error.message}`;
-    banner.className = 'banner error';
-  } finally {
-    refreshButton.disabled = false;
-  }
+
+    try {
+      const sites = await json('/v1/sites');
+      const seen = new Set();
+      if (!sites.length) {
+        banner.textContent = 'No Morningstar systems are currently reported by the upstream API.';
+        banner.className = 'banner';
+        for (const view of siteViews.values()) view.card.remove();
+        siteViews.clear();
+        return;
+      }
+
+      const results = await Promise.all(sites.map(async (site) => {
+        const siteUid = String(site.system_uid || site.name);
+        const encodedUid = encodeURIComponent(siteUid);
+        const [assessment, explanation] = await Promise.all([
+          json(`/v1/sites/${encodedUid}/assessment`),
+          json(`/v1/sites/${encodedUid}/explain`),
+        ]);
+        let forensic;
+        try {
+          forensic = await getForensics(siteUid, forceForensics);
+        } catch (error) {
+          forensic = { error: error.message };
+        }
+        return { siteUid, site, assessment, explanation, forensic };
+      }));
+
+      for (const result of results) {
+        seen.add(result.siteUid);
+        const view = siteViews.get(result.siteUid) || createSiteView(result.siteUid);
+        updateSiteView(view, result.site, result.assessment, result.explanation, result.forensic);
+      }
+
+      for (const [siteUid, view] of [...siteViews.entries()]) {
+        if (seen.has(siteUid)) continue;
+        view.card.remove();
+        siteViews.delete(siteUid);
+        forensicCache.delete(siteUid);
+      }
+
+      setText(banner, `Monitoring ${sites.length} site${sites.length === 1 ? '' : 's'}. Live values update in place.`);
+      banner.className = 'banner ok';
+    } catch (error) {
+      setText(banner, `Sentinel could not read the upstream site model: ${error.message}`);
+      banner.className = 'banner error';
+    } finally {
+      refreshButton.disabled = false;
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
-refreshButton.addEventListener('click', () => {
-  controllerDetailCache.clear();
-  refresh();
-});
-
+refreshButton.addEventListener('click', () => refresh(true));
 refresh();
-setInterval(refresh, 15000);
+setInterval(() => refresh(false), LIVE_REFRESH_MS);
+setInterval(updateRelativeAges, 1000);

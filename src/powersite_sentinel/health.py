@@ -22,7 +22,7 @@ _CONTROLLER_TELEMETRY_METRICS = (
 
 
 def _number(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
 
@@ -47,7 +47,6 @@ def _controller_telemetry_coverage(snapshot: dict[str, object]) -> tuple[int, in
     TriStar for not reporting whole-system shunt/load measurements it cannot
     physically observe.
     """
-
     latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}
     metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
 

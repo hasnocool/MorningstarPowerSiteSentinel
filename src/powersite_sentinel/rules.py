@@ -24,7 +24,7 @@ _CLEAR_STATES = {
 
 
 def _number(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
 
@@ -58,9 +58,9 @@ def _state_values(value: object) -> list[str]:
         return []
     if isinstance(value, bool):
         return [str(value).lower()] if value else []
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return [] if float(value) == 0.0 else [str(value)]
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         states: list[str] = []
         for item in value:
             for state in _state_values(item):
@@ -84,12 +84,7 @@ def _metric_observable(payload: object) -> bool:
 
 
 def observable_incident_fingerprints(snapshot: dict[str, object]) -> set[str]:
-    """Return incident fingerprints that current evidence can safely resolve.
-
-    Absence of a measurement is not evidence that an earlier condition cleared.
-    A fingerprint is included only when the underlying signal is currently present.
-    """
-
+    """Return incident fingerprints that current evidence can safely resolve."""
     observable: set[str] = set()
     power_flow = snapshot.get("power_flow") if isinstance(snapshot.get("power_flow"), dict) else {}
     latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}

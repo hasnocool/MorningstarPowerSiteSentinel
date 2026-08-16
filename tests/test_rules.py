@@ -81,7 +81,7 @@ def test_controller_alarm_and_fault_metrics_create_findings() -> None:
     assert "controller_alarm_active:latest.metrics.alarms" in observable
 
 
-def test_clear_controller_faults_and_alarms_do_not_create_findings() -> None:
+def test_controller_alarm_is_warning_and_clear_fault_does_not_fire() -> None:
     now = datetime(2026, 8, 16, 4, 0, tzinfo=UTC)
     snapshot = {
         "controllers": [{"controller_uid": "ctrl_a", "status": "online"}],
@@ -95,7 +95,7 @@ def test_clear_controller_faults_and_alarms_do_not_create_findings() -> None:
                     "expected_contributors": 1,
                 },
                 "alarms": {
-                    "value": [],
+                    "value": ["rts_open"],
                     "quality": "complete",
                     "contributors": 1,
                     "expected_contributors": 1,
@@ -105,8 +105,32 @@ def test_clear_controller_faults_and_alarms_do_not_create_findings() -> None:
         "power_flow": {"observed_at": now.isoformat(), "quality": "partial"},
     }
 
-    codes = {item.code for item in evaluate_findings(snapshot, Settings(), now=now)}
+    findings = evaluate_findings(snapshot, Settings(), now=now)
+    by_code = {item.code: item for item in findings}
+    assert by_code["controller_alarm_active"].severity == "warning"
+    assert "rts open" in by_code["controller_alarm_active"].summary
+    assert "controller_fault_active" not in by_code
 
+    observable = observable_incident_fingerprints(snapshot)
+    assert "controller_alarm_active:latest.metrics.alarms" in observable
+    assert "controller_fault_active:latest.metrics.faults" in observable
+
+
+def test_clear_controller_faults_and_alarms_do_not_create_findings() -> None:
+    now = datetime(2026, 8, 16, 4, 0, tzinfo=UTC)
+    snapshot = {
+        "controllers": [{"controller_uid": "ctrl_a", "status": "online"}],
+        "latest": {
+            "observed_at": now.isoformat(),
+            "metrics": {
+                "faults": {"value": ["NONE"], "quality": "complete", "contributors": 1},
+                "alarms": {"value": [], "quality": "complete", "contributors": 1},
+            },
+        },
+        "power_flow": {"observed_at": now.isoformat(), "quality": "partial"},
+    }
+
+    codes = {item.code for item in evaluate_findings(snapshot, Settings(), now=now)}
     assert "controller_fault_active" not in codes
     assert "controller_alarm_active" not in codes
 

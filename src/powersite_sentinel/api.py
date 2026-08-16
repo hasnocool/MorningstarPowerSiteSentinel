@@ -16,6 +16,10 @@ from powersite_sentinel.config import Settings
 from powersite_sentinel.incidents import IncidentStore
 from powersite_sentinel.service import SentinelService
 
+_TIMELINE_CATEGORY_PATTERN = (
+    "^(communications|charge|fault|alarm|history|energy|incident|system)$"
+)
+
 
 def create_app(settings: Settings, service: SentinelService | None = None) -> FastAPI:
     sentinel = service or SentinelService(
@@ -39,7 +43,7 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
     app = FastAPI(
         title="Morningstar PowerSite Sentinel",
         version=__version__,
-        description="Local-first, read-only site observability and incident intelligence.",
+        description="Local-first, read-only site observability and forensic diagnostics.",
         lifespan=lifespan,
     )
     app.state.sentinel = sentinel
@@ -106,17 +110,61 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
         except MorningstarApiError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    @app.get("/v1/sites/{site_uid}/forensics")
+    async def forensics(
+        site_uid: str,
+        days: int | None = Query(None, ge=1, le=366),
+        max_gap_seconds: int = Query(300, ge=1, le=3600),
+        event_limit: int | None = Query(None, ge=1, le=5000),
+        refresh: bool = Query(False),
+    ) -> dict[str, object]:
+        try:
+            return await sentinel.forensic_report(
+                site_uid,
+                days=days,
+                max_gap_seconds=max_gap_seconds,
+                event_limit=event_limit,
+                refresh=refresh,
+            )
+        except MorningstarApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/v1/sites/{site_uid}/timeline")
+    async def timeline(
+        site_uid: str,
+        days: int | None = Query(None, ge=1, le=366),
+        max_gap_seconds: int = Query(300, ge=1, le=3600),
+        limit: int = Query(500, ge=1, le=5000),
+        category: str | None = Query(None, pattern=_TIMELINE_CATEGORY_PATTERN),
+    ) -> dict[str, object]:
+        try:
+            return await sentinel.timeline(
+                site_uid,
+                days=days,
+                max_gap_seconds=max_gap_seconds,
+                limit=limit,
+                category=category,
+            )
+        except MorningstarApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/v1/sites/{site_uid}/incidents")
     async def site_incidents(
         site_uid: str,
         status: str | None = Query("open", pattern="^(open|resolved)$"),
+        limit: int = Query(200, ge=1, le=5000),
     ) -> list[dict[str, object]]:
-        return await sentinel.incidents(site_uid=site_uid, status=status)
+        return await sentinel.incidents(site_uid=site_uid, status=status, limit=limit)
 
     @app.get("/v1/incidents")
     async def incidents(
         status: str | None = Query(None, pattern="^(open|resolved)$"),
+        limit: int = Query(200, ge=1, le=5000),
     ) -> list[dict[str, object]]:
-        return await sentinel.incidents(status=status)
+        return await sentinel.incidents(status=status, limit=limit)
 
     return app

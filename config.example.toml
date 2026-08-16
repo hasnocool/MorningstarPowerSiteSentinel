@@ -16,6 +16,16 @@ residual_critical_percent = 20.0
 soc_warning_percent = 30.0
 soc_critical_percent = 15.0
 
+[forensics]
+poll_interval_seconds = 300.0
+window_days = 30
+cache_seconds = 30.0
+event_limit = 1000
+history_missing_critical_days = 3
+energy_discrepancy_warning_percent = 10.0
+energy_discrepancy_critical_percent = 25.0
+energy_min_integrated_seconds = 21600.0
+
 [server]
 host = "127.0.0.1"
 port = 8090
