@@ -1,6 +1,4 @@
 from pathlib import Path
-
-
 WEB_ROOT = Path(__file__).parents[1] / "src" / "powersite_sentinel" / "web"
 
 
