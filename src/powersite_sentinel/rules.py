@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Iterator
 
 from powersite_sentinel.config import Settings
 from powersite_sentinel.models import Finding
