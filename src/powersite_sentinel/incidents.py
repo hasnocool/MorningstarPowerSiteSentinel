@@ -47,10 +47,26 @@ class IncidentStore:
         connection.executescript(_SCHEMA)
         return connection
 
-    async def reconcile(self, site_uid: str, findings: list[Finding]) -> list[dict[str, object]]:
-        return await asyncio.to_thread(self._reconcile, site_uid, findings)
+    async def reconcile(
+        self,
+        site_uid: str,
+        findings: list[Finding],
+        *,
+        resolvable_fingerprints: set[str] | None = None,
+    ) -> list[dict[str, object]]:
+        return await asyncio.to_thread(
+            self._reconcile,
+            site_uid,
+            findings,
+            resolvable_fingerprints,
+        )
 
-    def _reconcile(self, site_uid: str, findings: list[Finding]) -> list[dict[str, object]]:
+    def _reconcile(
+        self,
+        site_uid: str,
+        findings: list[Finding],
+        resolvable_fingerprints: set[str] | None,
+    ) -> list[dict[str, object]]:
         now = _now()
         active = {item.fingerprint: item for item in findings if item.severity != "info"}
         with self._connect() as db:
@@ -101,7 +117,11 @@ class IncidentStore:
                         ),
                     )
             for fingerprint, row in open_by_fingerprint.items():
-                if fingerprint not in active:
+                may_resolve = (
+                    resolvable_fingerprints is None
+                    or fingerprint in resolvable_fingerprints
+                )
+                if fingerprint not in active and may_resolve:
                     db.execute(
                         (
                             "UPDATE incidents SET status='resolved', resolved_at=?, "
