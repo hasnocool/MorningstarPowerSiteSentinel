@@ -68,10 +68,8 @@ async function refresh() {
     }
     for (const site of sites) {
       const uid = encodeURIComponent(site.system_uid || site.name);
-      const [assessment, explanation] = await Promise.all([
-        json(`/v1/sites/${uid}/assessment`),
-        json(`/v1/sites/${uid}/explain`),
-      ]);
+      const assessment = await json(`/v1/sites/${uid}/assessment`);
+      const explanation = await json(`/v1/sites/${uid}/explain`);
       renderSite(site, assessment, explanation);
     }
     banner.textContent = `Monitoring ${sites.length} site${sites.length === 1 ? '' : 's'}.`;
