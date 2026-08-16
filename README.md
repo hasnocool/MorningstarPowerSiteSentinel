@@ -56,7 +56,21 @@ conflict. Health and observability are deliberately separate concepts.
 
 ## Quick start
 
-Start MorningstarModbusAPI first, normally on `127.0.0.1:8080`.
+Start MorningstarModbusAPI first, normally on `127.0.0.1:8080`. Use `run` when the same process should both poll the
+controller and serve the HTTP API Sentinel consumes:
+
+```bash
+morningstar-modbus --config /path/to/morningstar-config.toml run
+```
+
+Verify the upstream service before starting Sentinel:
+
+```bash
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/v1/systems
+```
+
+Then start Sentinel:
 
 ```bash
 python -m venv .venv
@@ -78,12 +92,18 @@ Interactive API documentation is available at:
 http://127.0.0.1:8090/docs
 ```
 
+Sentinel retries connection-level upstream failures and retains the last-known-good site inventory/assessment in
+memory so a short MorningstarModbusAPI restart does not immediately erase the site view. `/health` still reports the
+upstream as unreachable while stale data is being shown.
+
 ## Configuration
 
 ```toml
 [morningstar]
 base_url = "http://127.0.0.1:8080"
 timeout_seconds = 5.0
+connect_attempts = 5
+retry_backoff_seconds = 0.25
 
 [sentinel]
 database_path = "./data/sentinel.db"
@@ -104,6 +124,8 @@ port = 8090
 Environment overrides are available for the common appliance settings:
 
 - `SENTINEL_MORNINGSTAR_URL`
+- `SENTINEL_MORNINGSTAR_CONNECT_ATTEMPTS`
+- `SENTINEL_MORNINGSTAR_RETRY_BACKOFF`
 - `SENTINEL_DATABASE_PATH`
 - `SENTINEL_POLL_INTERVAL`
 - `SENTINEL_HOST`
