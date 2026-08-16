@@ -25,19 +25,48 @@
           <div>
             <p class="site-name"></p>
             <p class="site-id mono"></p>
+            <p class="site-status"></p>
           </div>
-          <div class="score-ring"><span class="score"></span><small>health</small></div>
+          <div class="score-ring"><span class="score"></span><small>evidence health</small></div>
         </div>
+
         <div class="score-row">
-          <div><strong class="observability"></strong><span>observability</span></div>
+          <div><strong class="observability"></strong><span>controller telemetry</span></div>
+          <div><strong class="accounting"></strong><span>site accounting</span></div>
           <div><strong class="controllers"></strong><span>controllers</span></div>
           <div><strong class="incidents"></strong><span>open incidents</span></div>
         </div>
-        <div class="flow-grid">
-          <div><span>Solar</span><strong class="solar"></strong></div>
-          <div><span>Battery net</span><strong class="battery"></strong></div>
-          <div><span>DC loads</span><strong class="loads"></strong></div>
-        </div>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <h2>Controller telemetry</h2>
+            <span class="telemetry-age"></span>
+          </div>
+          <div class="metric-grid controller-grid">
+            <div><span>Solar input</span><strong class="solar"></strong></div>
+            <div><span>Charge output</span><strong class="charge-output"></strong></div>
+            <div><span>Battery voltage</span><strong class="battery-voltage"></strong></div>
+            <div><span>Charge current</span><strong class="charge-current"></strong></div>
+            <div><span>Array voltage</span><strong class="array-voltage"></strong></div>
+            <div><span>Charge stage</span><strong class="charge-stage"></strong></div>
+            <div><span>Energy today</span><strong class="daily-energy"></strong></div>
+            <div><span>Battery temperature</span><strong class="battery-temperature"></strong></div>
+          </div>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <h2>Whole-site power accounting</h2>
+            <span class="accounting-status"></span>
+          </div>
+          <div class="metric-grid accounting-grid">
+            <div><span>Battery net</span><strong class="battery"></strong></div>
+            <div><span>DC loads</span><strong class="loads"></strong></div>
+            <div><span>Battery SOC</span><strong class="battery-soc"></strong></div>
+          </div>
+          <p class="coverage-note"></p>
+        </section>
+
         <p class="explanation"></p>
         <div class="findings"></div>
       </article>
