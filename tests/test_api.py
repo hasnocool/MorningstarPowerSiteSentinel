@@ -28,6 +28,12 @@ class FakeService:
     async def explain_site(self, site_uid):
         return {"site_uid": site_uid, "headline": "Healthy"}
 
+    async def controller_detail(self, controller_uid):
+        return {
+            "controller_uid": controller_uid,
+            "snapshot": {"controller": {"controller_uid": controller_uid}},
+        }
+
     async def incidents(self, site_uid=None, status=None):
         return []
 
@@ -38,4 +44,7 @@ def test_read_only_product_api() -> None:
         assert client.get("/health").json()["upstream"] == "reachable"
         assert client.get("/v1/sites").json()[0]["system_uid"] == "sys_default"
         assert client.get("/v1/sites/sys_default/assessment").status_code == 200
+        detail = client.get("/v1/controllers/controller_a/detail")
+        assert detail.status_code == 200
+        assert detail.json()["controller_uid"] == "controller_a"
         assert client.post("/v1/sites/sys_default/assessment").status_code == 405
