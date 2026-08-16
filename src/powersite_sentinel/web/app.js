@@ -61,19 +61,31 @@ async function refresh() {
   banner.className = 'banner';
   sitesRoot.replaceChildren();
   try {
-    const sites = await json('/v1/sites');
+    const [sentinelHealth, sites] = await Promise.all([
+      json('/health'),
+      json('/v1/sites'),
+    ]);
     if (!sites.length) {
       banner.textContent = 'No Morningstar systems are currently reported by the upstream API.';
       return;
     }
+
+    let stale = sentinelHealth.upstream !== 'reachable';
     for (const site of sites) {
       const uid = encodeURIComponent(site.system_uid || site.name);
       const assessment = await json(`/v1/sites/${uid}/assessment`);
       const explanation = await json(`/v1/sites/${uid}/explain`);
+      stale = stale || assessment.upstream?.stale === true;
       renderSite(site, assessment, explanation);
     }
-    banner.textContent = `Monitoring ${sites.length} site${sites.length === 1 ? '' : 's'}.`;
-    banner.className = 'banner ok';
+
+    if (stale) {
+      banner.textContent = `Showing last-known-good data for ${sites.length} site${sites.length === 1 ? '' : 's'} while MorningstarModbusAPI reconnects.`;
+      banner.className = 'banner';
+    } else {
+      banner.textContent = `Monitoring ${sites.length} site${sites.length === 1 ? '' : 's'}.`;
+      banner.className = 'banner ok';
+    }
   } catch (error) {
     banner.textContent = `Sentinel could not read the upstream site model: ${error.message}`;
     banner.className = 'banner error';
