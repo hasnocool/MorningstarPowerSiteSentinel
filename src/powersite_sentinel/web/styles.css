@@ -49,7 +49,6 @@ main { padding: 1.5rem clamp(1rem, 5vw, 4rem) 4rem; }
 .section-heading span { font-size: .78rem; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
 .accounting-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.accounting-grid.all-unmeasured { display: none; }
 .coverage-note { margin: .65rem 0 0; color: var(--muted); font-size: .86rem; line-height: 1.45; }
 .explanation { margin: 1rem 0; padding: 1rem; border-left: 3px solid var(--good); background: #0b1412; border-radius: 0 12px 12px 0; line-height: 1.5; }
 .findings { display: grid; gap: .55rem; }
@@ -74,11 +73,14 @@ main { padding: 1.5rem clamp(1rem, 5vw, 4rem) 4rem; }
 .detail-table th, .detail-table td { padding: .65rem .7rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
 .detail-table th { position: sticky; top: 0; background: #101a18; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; }
 .detail-table tr:last-child td { border-bottom: 0; }
-.metric-visibility { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: .7rem 0; color: var(--muted); font-size: .78rem; }
+.metric-toggle-row td { background: #09110f; }
+.metric-visibility { display: flex; align-items: center; justify-content: space-between; gap: .75rem; color: var(--muted); font-size: .78rem; }
 .secondary-button { background: transparent; color: #c9d8d0; border: 1px solid var(--border); padding: .45rem .7rem; font-size: .72rem; }
 .secondary-button:hover, .secondary-button:focus-visible { border-color: var(--good); color: #edf5ef; }
 .unmeasured-row { opacity: .62; }
 .ledger-note { grid-column: 1 / -1; margin: .2rem 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+.ledger-note summary { cursor: pointer; color: #c9d8d0; }
+.ledger-note ul { margin: .55rem 0 0; padding-left: 1.2rem; display: grid; gap: .35rem; }
 .event-list { display: grid; gap: .55rem; }
 .event-item { display: grid; gap: .18rem; padding: .7rem; border: 1px solid var(--border); border-radius: 11px; background: #09110f; }
 .event-item span, .detail-meta, .empty-detail { color: var(--muted); font-size: .78rem; }
