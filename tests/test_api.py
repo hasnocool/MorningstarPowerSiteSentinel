@@ -48,3 +48,17 @@ def test_read_only_product_api() -> None:
         assert detail.status_code == 200
         assert detail.json()["controller_uid"] == "controller_a"
         assert client.post("/v1/sites/sys_default/assessment").status_code == 405
+
+
+def test_dashboard_assets_are_not_cached_across_deployments() -> None:
+    app = create_app(Settings(monitor_enabled=False), service=FakeService())
+    with TestClient(app) as client:
+        index = client.get("/")
+        script = client.get("/assets/app.js")
+
+    assert index.status_code == 200
+    assert script.status_code == 200
+    assert index.headers["cache-control"] == "no-store, max-age=0"
+    assert script.headers["cache-control"] == "no-store, max-age=0"
+    assert "site accounting coverage" in index.text
+    assert "refinements.js" not in index.text
