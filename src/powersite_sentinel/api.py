@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -45,6 +45,13 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
         lifespan=lifespan,
     )
     app.state.sentinel = sentinel
+
+    @app.middleware("http")
+    async def prevent_stale_web_assets(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     web_dir = Path(__file__).with_name("web")
     app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
