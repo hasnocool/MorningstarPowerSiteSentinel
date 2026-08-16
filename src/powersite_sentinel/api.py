@@ -88,6 +88,13 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
         except MorningstarApiError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    @app.get("/v1/controllers/{controller_uid}/detail")
+    async def controller_detail(controller_uid: str) -> dict[str, object]:
+        try:
+            return await sentinel.controller_detail(controller_uid)
+        except MorningstarApiError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     @app.get("/v1/sites/{site_uid}/incidents")
     async def site_incidents(
         site_uid: str,
