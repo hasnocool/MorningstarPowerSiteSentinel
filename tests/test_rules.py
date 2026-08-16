@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from powersite_sentinel.config import Settings
-from powersite_sentinel.rules import evaluate_findings
+from powersite_sentinel.rules import evaluate_findings, observable_incident_fingerprints
 
 
 def test_conflict_residual_and_soc_findings() -> None:
@@ -45,3 +45,27 @@ def test_stale_and_offline_site_is_critical() -> None:
     by_code = {item.code: item for item in findings}
     assert by_code["telemetry_stale"].severity == "critical"
     assert by_code["controller_offline"].severity == "critical"
+
+
+def test_only_currently_observable_signals_can_resolve_incidents() -> None:
+    snapshot = {
+        "controllers": [{"controller_uid": "ctrl_a", "status": "online"}],
+        "latest": {"observed_at": "2026-08-16T04:00:00+00:00"},
+        "power_flow": {
+            "observed_at": "2026-08-16T04:00:00+00:00",
+            "battery": {
+                "soc_percent": {"value": None, "quality": "empty", "status": "unknown"},
+                "net_current_a": {"value": None, "quality": "empty", "status": "unknown"},
+            },
+            "balance": {
+                "whole_system_residual_w": {"value": None, "quality": "empty", "status": "unknown"},
+            },
+        },
+    }
+    observable = observable_incident_fingerprints(snapshot)
+    assert "telemetry_stale:site" in observable
+    assert "controller_offline:site" in observable
+    assert "controller_degraded:site" in observable
+    assert "reported_soc_low:site" not in observable
+    assert "power_balance_residual:power_flow.balance.whole_system_residual_w" not in observable
+    assert "measurement_conflict:battery.net_current_a" not in observable
