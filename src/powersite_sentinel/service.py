@@ -24,7 +24,7 @@ def _value(payload: object) -> float | None:
     if not isinstance(payload, dict):
         return None
     value = payload.get("value")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
 

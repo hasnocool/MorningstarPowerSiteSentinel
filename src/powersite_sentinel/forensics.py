@@ -9,7 +9,7 @@ from powersite_sentinel.models import Finding
 
 
 def _number(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
 
@@ -35,7 +35,7 @@ def _controller_uid(controller: dict[str, object]) -> str:
 
 def _duration_days(gap: dict[str, object]) -> int:
     value = gap.get("duration_days")
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
 
 
 def _comparison_status(
