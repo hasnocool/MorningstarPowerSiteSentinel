@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PowerSite Sentinel</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">LOCAL-FIRST POWER OBSERVABILITY</p>
+        <h1>PowerSite Sentinel</h1>
+        <p class="subtitle">Evidence-backed health, power flow, and incident intelligence.</p>
+      </div>
+      <button id="refresh">Refresh</button>
+    </header>
+    <main>
+      <div id="banner" class="banner">Connecting to Sentinel…</div>
+      <section id="sites" class="site-grid"></section>
+    </main>
+    <template id="site-template">
+      <article class="site-card">
+        <div class="site-heading">
+          <div>
+            <p class="site-name"></p>
+            <p class="site-id mono"></p>
+          </div>
+          <div class="score-ring"><span class="score"></span><small>health</small></div>
+        </div>
+        <div class="score-row">
+          <div><strong class="observability"></strong><span>observability</span></div>
+          <div><strong class="controllers"></strong><span>controllers</span></div>
+          <div><strong class="incidents"></strong><span>open incidents</span></div>
+        </div>
+        <div class="flow-grid">
+          <div><span>Solar</span><strong class="solar"></strong></div>
+          <div><span>Battery net</span><strong class="battery"></strong></div>
+          <div><span>DC loads</span><strong class="loads"></strong></div>
+        </div>
+        <p class="explanation"></p>
+        <div class="findings"></div>
+      </article>
+    </template>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>
