@@ -8,6 +8,20 @@ from datetime import UTC, datetime
 from powersite_sentinel.config import Settings
 from powersite_sentinel.models import Finding
 
+_CLEAR_STATES = {
+    "",
+    "0",
+    "0.0",
+    "[]",
+    "{}",
+    "none",
+    "clear",
+    "normal",
+    "ok",
+    "no_faults",
+    "no_alarms",
+}
+
 
 def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -39,16 +53,42 @@ def _walk(value: object, path: str = "") -> Iterator[tuple[str, dict[str, object
             yield from _walk(item, f"{path}[{index}]")
 
 
+def _state_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, bool):
+        return [str(value).lower()] if value else []
+    if isinstance(value, (int, float)):
+        return [] if float(value) == 0.0 else [str(value)]
+    if isinstance(value, (list, tuple, set)):
+        states: list[str] = []
+        for item in value:
+            for state in _state_values(item):
+                if state not in states:
+                    states.append(state)
+        return states
+    text = str(value).strip()
+    return [] if text.lower() in _CLEAR_STATES else [text]
+
+
+def _metric_observable(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("value") is not None:
+        return True
+    contributors = _number(payload.get("contributors")) or 0.0
+    if contributors > 0:
+        return True
+    quality = str(payload.get("quality") or "").lower()
+    return quality in {"complete", "partial", "derived"}
+
+
 def observable_incident_fingerprints(snapshot: dict[str, object]) -> set[str]:
-    """Return incident fingerprints that current evidence can safely resolve.
-
-    Absence of a measurement is not evidence that an earlier condition cleared.
-    A fingerprint is included only when the underlying signal is currently present.
-    """
-
+    """Return incident fingerprints that current evidence can safely resolve."""
     observable: set[str] = set()
     power_flow = snapshot.get("power_flow") if isinstance(snapshot.get("power_flow"), dict) else {}
     latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}
+    metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
     controllers = snapshot.get("controllers") if isinstance(snapshot.get("controllers"), list) else []
 
     if _parse_time(power_flow.get("observed_at") or latest.get("observed_at")) is not None:
@@ -57,6 +97,11 @@ def observable_incident_fingerprints(snapshot: dict[str, object]) -> set[str]:
     if controllers:
         observable.add("controller_offline:site")
         observable.add("controller_degraded:site")
+
+    if _metric_observable(metrics.get("faults")):
+        observable.add("controller_fault_active:latest.metrics.faults")
+    if _metric_observable(metrics.get("alarms")):
+        observable.add("controller_alarm_active:latest.metrics.alarms")
 
     for path, payload in _walk(power_flow):
         quality = str(payload.get("quality") or "")
@@ -94,6 +139,7 @@ def evaluate_findings(
     current = (now or datetime.now(UTC)).astimezone(UTC)
     power_flow = snapshot.get("power_flow") if isinstance(snapshot.get("power_flow"), dict) else {}
     latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}
+    metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
     controllers = snapshot.get("controllers") if isinstance(snapshot.get("controllers"), list) else []
 
     observed_at = _parse_time(power_flow.get("observed_at") or latest.get("observed_at"))
@@ -141,6 +187,38 @@ def evaluate_findings(
                 title="Controller communication is degraded",
                 summary=f"{len(degraded)} controller(s) are reported degraded or stale.",
                 evidence={"controller_uids": degraded},
+            )
+        )
+
+    fault_states = _state_values(
+        metrics.get("faults", {}).get("value") if isinstance(metrics.get("faults"), dict) else None
+    )
+    if fault_states:
+        findings.append(
+            Finding(
+                code="controller_fault_active",
+                severity="critical",
+                title="Controller reports an active fault",
+                summary="Active controller fault state(s): "
+                + ", ".join(state.replace("_", " ") for state in fault_states)
+                + ".",
+                evidence={"states": fault_states, "path": "latest.metrics.faults"},
+            )
+        )
+
+    alarm_states = _state_values(
+        metrics.get("alarms", {}).get("value") if isinstance(metrics.get("alarms"), dict) else None
+    )
+    if alarm_states:
+        findings.append(
+            Finding(
+                code="controller_alarm_active",
+                severity="warning",
+                title="Controller reports an active alarm",
+                summary="Active controller alarm state(s): "
+                + ", ".join(state.replace("_", " ") for state in alarm_states)
+                + ".",
+                evidence={"states": alarm_states, "path": "latest.metrics.alarms"},
             )
         )
 
