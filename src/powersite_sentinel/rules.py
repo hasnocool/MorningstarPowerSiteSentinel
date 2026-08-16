@@ -39,6 +39,51 @@ def _walk(value: object, path: str = "") -> Iterator[tuple[str, dict[str, object
             yield from _walk(item, f"{path}[{index}]")
 
 
+def observable_incident_fingerprints(snapshot: dict[str, object]) -> set[str]:
+    """Return incident fingerprints that current evidence can safely resolve.
+
+    Absence of a measurement is not evidence that an earlier condition cleared.
+    A fingerprint is included only when the underlying signal is currently present.
+    """
+
+    observable: set[str] = set()
+    power_flow = snapshot.get("power_flow") if isinstance(snapshot.get("power_flow"), dict) else {}
+    latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}
+    controllers = snapshot.get("controllers") if isinstance(snapshot.get("controllers"), list) else []
+
+    if _parse_time(power_flow.get("observed_at") or latest.get("observed_at")) is not None:
+        observable.add("telemetry_stale:site")
+
+    if controllers:
+        observable.add("controller_offline:site")
+        observable.add("controller_degraded:site")
+
+    for path, payload in _walk(power_flow):
+        quality = str(payload.get("quality") or "")
+        status = str(payload.get("status") or "")
+        has_value = _number(payload.get("value")) is not None
+        has_positive_evidence = has_value or quality in {"complete", "partial", "derived"}
+        has_positive_evidence = has_positive_evidence or status in {"observed", "derived"}
+        if has_positive_evidence:
+            observable.add(f"measurement_conflict:{path}")
+
+    balance = power_flow.get("balance") if isinstance(power_flow.get("balance"), dict) else {}
+    residual_payload = (
+        balance.get("whole_system_residual_w")
+        if isinstance(balance.get("whole_system_residual_w"), dict)
+        else {}
+    )
+    if _number(residual_payload.get("value")) is not None:
+        observable.add("power_balance_residual:power_flow.balance.whole_system_residual_w")
+
+    battery = power_flow.get("battery") if isinstance(power_flow.get("battery"), dict) else {}
+    soc_payload = battery.get("soc_percent") if isinstance(battery.get("soc_percent"), dict) else {}
+    if _number(soc_payload.get("value")) is not None:
+        observable.add("reported_soc_low:site")
+
+    return observable
+
+
 def evaluate_findings(
     snapshot: dict[str, object],
     settings: Settings,
