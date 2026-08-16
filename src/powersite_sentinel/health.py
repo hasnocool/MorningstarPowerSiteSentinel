@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import datetime as dt
 
 from powersite_sentinel.config import Settings
 from powersite_sentinel.models import Finding, Score
@@ -76,10 +76,10 @@ def calculate_scores(
     findings: list[Finding],
     settings: Settings,
     *,
-    now: datetime | None = None,
+    now: dt.datetime | None = None,
 ) -> dict[str, object]:
     controllers = snapshot.get("controllers") if isinstance(snapshot.get("controllers"), list) else []
-    current = (now or datetime.now(UTC)).astimezone(UTC)
+    current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
 
     communication = 100
     offline = 0
@@ -177,7 +177,8 @@ def calculate_scores(
             "observed_metrics": observed_metrics,
             "supported_metrics": supported_metrics,
             "explanation": (
-                "Capability-aware coverage of controller-native telemetry expected from the enrolled hardware."
+                "Capability-aware coverage of controller-native telemetry expected from the "
+                "enrolled hardware."
             ),
         },
         "power_accounting": {
