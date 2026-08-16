@@ -9,7 +9,7 @@ from powersite_sentinel.client import MorningstarApiClient
 from powersite_sentinel.config import Settings
 from powersite_sentinel.health import calculate_scores
 from powersite_sentinel.incidents import IncidentStore
-from powersite_sentinel.rules import evaluate_findings
+from powersite_sentinel.rules import evaluate_findings, observable_incident_fingerprints
 
 
 def _value(payload: object) -> float | None:
@@ -42,7 +42,12 @@ class SentinelService:
         now = datetime.now(UTC)
         findings = evaluate_findings(snapshot, self.settings, now=now)
         health = calculate_scores(snapshot, findings, self.settings, now=now)
-        open_incidents = await self.store.reconcile(site_uid, findings)
+        resolvable = observable_incident_fingerprints(snapshot)
+        open_incidents = await self.store.reconcile(
+            site_uid,
+            findings,
+            resolvable_fingerprints=resolvable,
+        )
         assessment = {
             "site_uid": site_uid,
             "assessed_at": now.isoformat(),
