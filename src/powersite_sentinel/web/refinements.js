@@ -18,7 +18,7 @@ function reconcileControllerCount(card) {
   if (!Number.isFinite(count)) return;
 
   const summary = card.querySelector('.controllers');
-  if (summary) {
+  if (summary && summary.textContent !== String(count)) {
     summary.textContent = String(count);
     summary.title = 'Count reconciled from the current physical-controller inventory.';
   }
@@ -27,7 +27,7 @@ function reconcileControllerCount(card) {
     const label = fact.querySelector('span')?.textContent?.trim().toLowerCase();
     if (label !== 'controller count') continue;
     const value = fact.querySelector('strong');
-    if (value) {
+    if (value && value.textContent !== String(count)) {
       value.textContent = String(count);
       value.title = 'Count reconciled from the current physical-controller inventory.';
     }
@@ -69,7 +69,11 @@ function updateMetricVisibility(section, showUnmeasured) {
     table?.before(control);
   }
 
+  const state = `${measured}:${unmeasured}:${showUnmeasured}`;
+  if (control.dataset.state === state) return;
+  control.dataset.state = state;
   control.replaceChildren();
+
   const summary = document.createElement('span');
   summary.textContent = unmeasured
     ? `${measured} measured/observed metrics shown · ${unmeasured} unsupported or unmeasured hidden`
@@ -98,15 +102,21 @@ function cleanEnergyLedger(card) {
   let hidden = 0;
   for (const fact of ledger.querySelectorAll('.fact')) {
     const value = fact.querySelector('strong')?.textContent?.trim().toLowerCase();
-    if (value === 'available' || value === 'unmeasured' || value === '—') {
-      fact.hidden = true;
-      hidden += 1;
-    } else {
-      fact.hidden = false;
-    }
+    const shouldHide = value === 'available' || value === 'unmeasured' || value === '—';
+    fact.hidden = shouldHide;
+    if (shouldHide) hidden += 1;
   }
 
-  if (!hidden || ledger.querySelector('.ledger-note')) return;
+  const existing = ledger.querySelector('.ledger-note');
+  if (!hidden) {
+    existing?.remove();
+    return;
+  }
+  if (existing) {
+    existing.textContent = `${hidden} empty or structural ledger fields are hidden. The inspector prioritizes numeric/source-backed values.`;
+    return;
+  }
+
   const note = document.createElement('p');
   note.className = 'ledger-note';
   note.textContent = `${hidden} empty or structural ledger fields are hidden. The inspector prioritizes numeric/source-backed values.`;
@@ -126,10 +136,28 @@ function refineCard(card) {
   cleanEnergyLedger(card);
 }
 
-function refineAll() {
-  for (const card of sitesRoot.querySelectorAll('.site-card')) refineCard(card);
+let observer;
+let scheduled = false;
+
+function observe() {
+  observer.observe(sitesRoot, { childList: true, subtree: true, characterData: true });
 }
 
-const observer = new MutationObserver(() => queueMicrotask(refineAll));
-observer.observe(sitesRoot, { childList: true, subtree: true, characterData: true });
+function refineAll() {
+  observer.disconnect();
+  for (const card of sitesRoot.querySelectorAll('.site-card')) refineCard(card);
+  observe();
+}
+
+function scheduleRefinement() {
+  if (scheduled) return;
+  scheduled = true;
+  queueMicrotask(() => {
+    scheduled = false;
+    refineAll();
+  });
+}
+
+observer = new MutationObserver(scheduleRefinement);
+observe();
 refineAll();
