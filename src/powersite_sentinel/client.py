@@ -16,20 +16,39 @@ class MorningstarApiError(RuntimeError):
 class MorningstarApiClient:
     base_url: str
     timeout_seconds: float = 5.0
+    connect_attempts: int = 5
+    retry_backoff_seconds: float = 0.25
     transport: httpx.AsyncBaseTransport | None = None
 
     async def _get(self, path: str) -> object:
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout_seconds,
-                transport=self.transport,
-            ) as client:
-                response = await client.get(path)
-                response.raise_for_status()
-                return response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise MorningstarApiError(f"GET {path} failed: {exc}") from exc
+        attempts = max(1, self.connect_attempts)
+        last_connect_error: httpx.HTTPError | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url,
+                    timeout=self.timeout_seconds,
+                    transport=self.transport,
+                ) as client:
+                    response = await client.get(path)
+                    response.raise_for_status()
+                    return response.json()
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                last_connect_error = exc
+                if attempt >= attempts:
+                    break
+                delay = self.retry_backoff_seconds * (2 ** (attempt - 1))
+                await asyncio.sleep(max(0.0, delay))
+            except (httpx.HTTPError, ValueError) as exc:
+                raise MorningstarApiError(f"GET {path} failed: {exc}") from exc
+
+        assert last_connect_error is not None
+        raise MorningstarApiError(
+            f"GET {path} failed after {attempts} connection attempts: {last_connect_error}. "
+            "Verify MorningstarModbusAPI is running with the `run` or `serve` command and that "
+            "SENTINEL_MORNINGSTAR_URL points at its HTTP listener."
+        ) from last_connect_error
 
     async def health(self) -> dict[str, object]:
         payload = await self._get("/health")
