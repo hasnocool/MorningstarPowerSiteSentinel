@@ -15,7 +15,12 @@ async function json(path) {
 function renderFinding(item) {
   const row = document.createElement('div');
   row.className = `finding ${item.severity}`;
-  row.innerHTML = `<strong>${item.title}</strong><span>${item.summary}</span>`;
+
+  const title = document.createElement('strong');
+  title.textContent = String(item.title ?? 'Finding');
+  const summary = document.createElement('span');
+  summary.textContent = String(item.summary ?? '');
+  row.append(title, summary);
   return row;
 }
 
