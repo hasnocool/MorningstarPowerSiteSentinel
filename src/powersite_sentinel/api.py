@@ -22,6 +22,8 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
         MorningstarApiClient(
             base_url=settings.morningstar_base_url,
             timeout_seconds=settings.morningstar_timeout_seconds,
+            connect_attempts=settings.morningstar_connect_attempts,
+            retry_backoff_seconds=settings.morningstar_retry_backoff_seconds,
         ),
         IncidentStore(settings.database_path),
         settings,
