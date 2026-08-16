@@ -17,6 +17,14 @@ const formatNumber = (value, unit, digits = 1, missing = 'unmeasured') => {
   return unit ? `${rounded} ${unit}` : rounded;
 };
 
+const formatPower = (metric, missing = 'unmeasured') => {
+  const value = metricValue(metric);
+  if (value === null) return missing;
+  const magnitude = Math.abs(value);
+  const digits = magnitude > 0 && magnitude < 1 ? 2 : magnitude < 10 ? 1 : 0;
+  return formatNumber(value, metric?.unit || 'W', digits, missing);
+};
+
 const formatMetric = (metric, fallbackUnit = '', digits = 1, missing = 'unmeasured') => (
   formatNumber(metricValue(metric), metric?.unit || fallbackUnit, digits, missing)
 );
@@ -45,18 +53,27 @@ const labelize = (value) => String(value)
 const displayValue = (value) => {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  if (typeof value === 'number') {
+    return Number.isInteger(value)
+      ? String(value)
+      : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  }
   if (Array.isArray(value)) {
     if (!value.length) return 'none';
-    if (value.every((item) => ['string', 'number', 'boolean'].includes(typeof item))) return value.join(', ');
+    if (value.every((item) => ['string', 'number', 'boolean'].includes(typeof item))) {
+      return value.join(', ');
+    }
     return `${value.length} record${value.length === 1 ? '' : 's'}`;
   }
-  if (typeof value === 'object') return 'available';
+  if (typeof value === 'object') return 'structured data';
   return String(value);
 };
 
 async function json(path) {
-  const response = await fetch(path, { headers: { Accept: 'application/json' } });
+  const response = await fetch(path, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  });
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   return response.json();
 }
@@ -64,7 +81,6 @@ async function json(path) {
 function renderFinding(item) {
   const row = document.createElement('div');
   row.className = `finding ${item.severity}`;
-
   const title = document.createElement('strong');
   title.textContent = String(item.title ?? 'Finding');
   const summary = document.createElement('span');
@@ -75,8 +91,12 @@ function renderFinding(item) {
 
 function controllerStatus(controllers) {
   if (!Array.isArray(controllers) || !controllers.length) return 'No controller inventory';
-  const online = controllers.filter((item) => String(item?.status || '').toLowerCase() === 'online').length;
-  if (online === controllers.length) return `${online}/${controllers.length} controller${controllers.length === 1 ? '' : 's'} online`;
+  const online = controllers.filter(
+    (item) => String(item?.status || '').toLowerCase() === 'online',
+  ).length;
+  if (online === controllers.length) {
+    return `${online}/${controllers.length} controller${controllers.length === 1 ? '' : 's'} online`;
+  }
   return `${online}/${controllers.length} controllers online`;
 }
 
@@ -88,7 +108,7 @@ function accountingGapText(flow) {
   if (!missing.length) {
     return 'Core whole-site measurements are source-backed and currently available.';
   }
-  return `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not directly measured by the current instrumentation. This reduces whole-site accounting coverage but is not an active controller fault.`;
+  return `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not directly measured by the current instrumentation. Add source-backed shunt/load measurements to enable full-site accounting.`;
 }
 
 function appendFact(root, label, value) {
@@ -122,7 +142,6 @@ function renderFacts(root, record, preferred = []) {
     appendFact(root, 'State', 'unavailable');
     return;
   }
-
   const used = new Set();
   for (const key of preferred) {
     if (!(key in record)) continue;
@@ -145,6 +164,13 @@ function renderFlatFacts(root, record, limit = 24) {
   entries.forEach(([label, value]) => appendFact(root, label, value));
 }
 
+function normalizedMetricObserved(metric) {
+  if (!metric || typeof metric !== 'object') return false;
+  if (metric.value !== null && metric.value !== undefined) return true;
+  if (Number(metric.contributors || 0) > 0) return true;
+  return ['complete', 'partial', 'derived'].includes(String(metric.quality || '').toLowerCase());
+}
+
 function formatNormalizedMetric(metric) {
   if (!metric || typeof metric !== 'object') return '—';
   if (Array.isArray(metric.value)) return metric.value.length ? metric.value.join(', ') : 'clear';
@@ -153,22 +179,60 @@ function formatNormalizedMetric(metric) {
   return 'unmeasured';
 }
 
+function appendMetricRow(root, name, metric, hidden = false) {
+  const row = document.createElement('tr');
+  row.hidden = hidden;
+  if (hidden) row.className = 'unmeasured-row';
+  const sources = Array.isArray(metric?.sources)
+    ? metric.sources.length
+    : Number(metric?.contributors ?? 0);
+  const expected = Number(metric?.expected_contributors ?? 0);
+  const sourceText = expected > 0 ? `${sources}/${expected}` : String(sources || '—');
+  [labelize(name), formatNormalizedMetric(metric), metric?.quality || metric?.status || '—', sourceText]
+    .forEach((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      row.append(cell);
+    });
+  root.append(row);
+  return row;
+}
+
 function renderSiteMetrics(root, metrics) {
   root.replaceChildren();
-  for (const [name, metric] of Object.entries(metrics || {})) {
-    const row = document.createElement('tr');
-    const sources = Array.isArray(metric?.sources) ? metric.sources.length : Number(metric?.contributors ?? 0);
-    const expected = Number(metric?.expected_contributors ?? 0);
-    const sourceText = expected > 0 ? `${sources}/${expected}` : String(sources || '—');
-    [labelize(name), formatNormalizedMetric(metric), metric?.quality || metric?.status || '—', sourceText]
-      .forEach((value) => {
-        const cell = document.createElement('td');
-        cell.textContent = String(value);
-        row.append(cell);
-      });
-    root.append(row);
+  const entries = Object.entries(metrics || {});
+  const measured = entries.filter(([, metric]) => normalizedMetricObserved(metric));
+  const unmeasured = entries.filter(([, metric]) => !normalizedMetricObserved(metric));
+
+  measured.forEach(([name, metric]) => appendMetricRow(root, name, metric));
+  const hiddenRows = unmeasured.map(([name, metric]) => appendMetricRow(root, name, metric, true));
+
+  if (unmeasured.length) {
+    const controlRow = document.createElement('tr');
+    controlRow.className = 'metric-toggle-row';
+    const cell = document.createElement('td');
+    cell.colSpan = 4;
+    const control = document.createElement('div');
+    control.className = 'metric-visibility';
+    const summary = document.createElement('span');
+    summary.textContent = `${measured.length} measured/observed metrics shown · ${unmeasured.length} unsupported or unmeasured hidden`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary-button';
+    let shown = false;
+    button.textContent = `Show ${unmeasured.length} unmeasured`;
+    button.addEventListener('click', () => {
+      shown = !shown;
+      hiddenRows.forEach((row) => { row.hidden = !shown; });
+      button.textContent = shown ? 'Hide unmeasured' : `Show ${unmeasured.length} unmeasured`;
+    });
+    control.append(summary, button);
+    cell.append(control);
+    controlRow.append(cell);
+    root.append(controlRow);
   }
-  if (!root.children.length) {
+
+  if (!entries.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 4;
@@ -178,9 +242,64 @@ function renderSiteMetrics(root, metrics) {
   }
 }
 
+function formatLedgerField(field) {
+  if (!field || typeof field !== 'object' || !Number.isFinite(field.value)) return null;
+  const digits = Math.abs(field.value) >= 100 ? 0 : 2;
+  return formatNumber(field.value, field.unit || '', digits, '');
+}
+
+function renderEnergyLedger(root, ledger) {
+  root.replaceChildren();
+  if (!ledger || typeof ledger !== 'object') {
+    appendFact(root, 'State', 'No energy ledger reported');
+    return;
+  }
+
+  appendFact(root, 'Period', ledger.period || 'unknown');
+  appendFact(root, 'Quality', ledger.quality || 'unknown');
+
+  let missing = 0;
+  const missingReasons = [];
+  for (const [groupName, group] of Object.entries({
+    flows: ledger.flows || {},
+    counters: ledger.counters || {},
+  })) {
+    for (const [name, field] of Object.entries(group)) {
+      const formatted = formatLedgerField(field);
+      if (formatted !== null) {
+        appendFact(root, `${labelize(groupName)} · ${labelize(name)}`, formatted);
+      } else {
+        missing += 1;
+        const reason = field && typeof field === 'object' ? field.reason : null;
+        if (reason) missingReasons.push(`${labelize(name)}: ${reason}`);
+      }
+    }
+  }
+
+  if (missing) {
+    const details = document.createElement('details');
+    details.className = 'ledger-note';
+    const summary = document.createElement('summary');
+    summary.textContent = `${missing} unavailable ledger field${missing === 1 ? '' : 's'} hidden`;
+    details.append(summary);
+    if (missingReasons.length) {
+      const list = document.createElement('ul');
+      missingReasons.slice(0, 12).forEach((reason) => {
+        const item = document.createElement('li');
+        item.textContent = reason;
+        list.append(item);
+      });
+      details.append(list);
+    }
+    root.append(details);
+  }
+}
+
 function renderEvents(root, payload) {
   root.replaceChildren();
-  const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
+  const events = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.events) ? payload.events : [];
   if (!events.length) {
     const empty = document.createElement('p');
     empty.className = 'empty-detail';
@@ -193,10 +312,15 @@ function renderEvents(root, payload) {
     const item = document.createElement('div');
     item.className = 'event-item';
     const title = document.createElement('strong');
-    title.textContent = String(event.title || event.code || event.type || event.event || 'Site event');
+    title.textContent = labelize(
+      event.title || event.code || event.event_type || event.type || event.event || 'Site event',
+    );
     const meta = document.createElement('span');
     const timestamp = event.observed_at || event.created_at || event.timestamp || event.at;
-    meta.textContent = timestamp ? `${relativeAge(timestamp)} · ${timestamp}` : 'Timestamp unavailable';
+    const severity = event.severity ? `${String(event.severity).toUpperCase()} · ` : '';
+    meta.textContent = timestamp
+      ? `${severity}${relativeAge(timestamp)} · ${timestamp}`
+      : `${severity}Timestamp unavailable`;
     const summary = document.createElement('p');
     summary.textContent = String(event.summary || event.message || event.detail || event.status || '');
     item.append(title, meta);
@@ -218,7 +342,6 @@ function renderConnections(root, connections) {
     root.append(empty);
     return;
   }
-
   const wrapper = document.createElement('div');
   wrapper.className = 'table-scroll';
   const table = document.createElement('table');
@@ -256,7 +379,6 @@ function renderRegisters(root, latest) {
     root.append(empty);
     return;
   }
-
   const wrapper = document.createElement('div');
   wrapper.className = 'table-scroll register-table';
   const table = document.createElement('table');
@@ -419,8 +541,7 @@ function renderControllerList(root, controllers) {
     const name = document.createElement('strong');
     name.textContent = String(controller.model || controller.family || controller.profile || uid || 'Controller');
     const meta = document.createElement('span');
-    const parts = [controller.serial_number, controller.profile, uid].filter(Boolean);
-    meta.textContent = parts.join(' · ');
+    meta.textContent = [controller.serial_number, controller.profile, uid].filter(Boolean).join(' · ');
     identity.append(name, meta);
 
     const state = document.createElement('span');
@@ -437,7 +558,6 @@ function renderControllerList(root, controllers) {
     const panel = document.createElement('div');
     panel.className = 'controller-detail';
     panel.hidden = !expanded;
-
     toggle.addEventListener('click', () => {
       const next = panel.hidden;
       panel.hidden = !next;
@@ -459,7 +579,8 @@ function renderControllerList(root, controllers) {
 
 function renderSiteDetails(fragment, site, assessment) {
   const snapshot = assessment.snapshot || {};
-  const siteRecord = snapshot.site || site || {};
+  const controllers = Array.isArray(snapshot.controllers) ? snapshot.controllers : [];
+  const siteRecord = { ...(snapshot.site || site || {}), controller_count: controllers.length };
   const latest = snapshot.latest || {};
   const detailRoot = fragment.querySelector('.site-details');
   fragment.querySelector('.assessed-at').textContent = assessment.assessed_at
@@ -478,11 +599,10 @@ function renderSiteDetails(fragment, site, assessment) {
   appendFact(siteFacts, 'Upstream', assessment.upstream?.stale ? 'stale / reconnecting' : 'reachable');
   appendFact(siteFacts, 'Latest telemetry', latest.observed_at || 'unavailable');
 
-  renderControllerList(fragment.querySelector('.controller-list'), snapshot.controllers || []);
+  renderControllerList(fragment.querySelector('.controller-list'), controllers);
   renderSiteMetrics(fragment.querySelector('.site-metrics'), latest.metrics || {});
-  renderFlatFacts(fragment.querySelector('.energy-ledger'), snapshot.energy_ledger || {}, 28);
+  renderEnergyLedger(fragment.querySelector('.energy-ledger'), snapshot.energy_ledger || {});
   renderEvents(fragment.querySelector('.recent-events'), snapshot.events);
-
   return detailRoot;
 }
 
@@ -496,7 +616,8 @@ function renderSite(site, assessment, explanation) {
   const latest = snapshot.latest ?? {};
   const metrics = latest.metrics ?? {};
   const flow = snapshot.power_flow ?? {};
-  const controllers = snapshot.controllers ?? [];
+  const controllers = Array.isArray(snapshot.controllers) ? snapshot.controllers : [];
+  const physicalControllerCount = controllers.length;
   const siteUid = String(site.system_uid || site.name || assessment.site_uid || 'site');
 
   card.dataset.status = health.status ?? 'unknown';
@@ -506,15 +627,15 @@ function renderSite(site, assessment, explanation) {
   fragment.querySelector('.score').textContent = health.value ?? '—';
   fragment.querySelector('.observability').textContent = `${observability.value ?? 0}%`;
   fragment.querySelector('.accounting').textContent = `${accounting.value ?? 0}%`;
-  fragment.querySelector('.controllers').textContent = site.controller_count ?? controllers.length ?? 0;
+  fragment.querySelector('.controllers').textContent = String(physicalControllerCount);
   fragment.querySelector('.incidents').textContent = assessment.open_incidents?.length ?? 0;
 
   fragment.querySelector('.telemetry-age').textContent = relativeAge(latest.observed_at);
-  fragment.querySelector('.solar').textContent = formatMetric(metrics.solar_input_power_w, 'W', 0);
-  fragment.querySelector('.charge-output').textContent = formatMetric(metrics.charge_output_power_w, 'W', 0);
+  fragment.querySelector('.solar').textContent = formatPower(metrics.solar_input_power_w);
+  fragment.querySelector('.charge-output').textContent = formatPower(metrics.charge_output_power_w);
   fragment.querySelector('.battery-voltage').textContent = formatMetric(metrics.battery_voltage_v, 'V', 2);
   fragment.querySelector('.charge-current').textContent = formatMetric(metrics.battery_charge_current_a, 'A', 2);
-  fragment.querySelector('.array-voltage').textContent = formatMetric(metrics.array_voltage_v, 'V', 1);
+  fragment.querySelector('.array-voltage').textContent = formatMetric(metrics.array_voltage_v, 'V', 2);
   fragment.querySelector('.charge-stage').textContent = formatStateMetric(metrics.charge_state);
 
   const dailyWh = metricValue(metrics.daily_charge_wh);
@@ -528,15 +649,23 @@ function renderSite(site, assessment, explanation) {
     1,
   );
 
+  const batteryNet = metricValue(flow.battery?.net_power_w);
+  const dcLoads = metricValue(flow.loads?.dc_power_w);
+  const batterySoc = metricValue(flow.battery?.soc_percent);
+  const accountingGrid = fragment.querySelector('.accounting-grid');
+  const coreAccountingKnown = [batteryNet, dcLoads, batterySoc].filter(Number.isFinite).length;
+  accountingGrid.hidden = coreAccountingKnown === 0;
   fragment.querySelector('.battery').textContent = formatMetric(flow.battery?.net_power_w, 'W', 0);
   fragment.querySelector('.loads').textContent = formatMetric(flow.loads?.dc_power_w, 'W', 0);
   fragment.querySelector('.battery-soc').textContent = formatMetric(flow.battery?.soc_percent, '%', 0);
-  fragment.querySelector('.accounting-status').textContent = accounting.status || 'unknown';
+  fragment.querySelector('.accounting-status').textContent = coreAccountingKnown === 0
+    ? 'not instrumented'
+    : accounting.status || 'unknown';
   fragment.querySelector('.coverage-note').textContent = accountingGapText(flow);
 
   const accountingLimited = Number(accounting.value ?? 0) < 80;
   const healthCaveat = accountingLimited
-    ? ' No active problem was detected in the observed telemetry, but whole-site electrical state is only partially measured.'
+    ? ' Whole-site electrical accounting is incomplete because some system-level measurements are not instrumented.'
     : '';
   fragment.querySelector('.explanation').textContent = `${explanation.headline}${healthCaveat}`;
 
@@ -546,7 +675,7 @@ function renderSite(site, assessment, explanation) {
     const clear = document.createElement('div');
     clear.className = 'finding clear';
     clear.textContent = accountingLimited
-      ? 'No evidence-backed warning or critical finding is active in the telemetry currently observed.'
+      ? 'No warning or critical finding is active in the currently observed controller telemetry; whole-site accounting remains partially instrumented.'
       : 'No evidence-backed warning or critical finding is active.';
     findingRoot.append(clear);
   } else {
@@ -595,8 +724,10 @@ async function refresh() {
     let stale = sentinelHealth.upstream !== 'reachable';
     for (const site of sites) {
       const uid = encodeURIComponent(site.system_uid || site.name);
-      const assessment = await json(`/v1/sites/${uid}/assessment`);
-      const explanation = await json(`/v1/sites/${uid}/explain`);
+      const [assessment, explanation] = await Promise.all([
+        json(`/v1/sites/${uid}/assessment`),
+        json(`/v1/sites/${uid}/explain`),
+      ]);
       stale = stale || assessment.upstream?.stale === true;
       renderSite(site, assessment, explanation);
     }
@@ -620,5 +751,6 @@ refreshButton.addEventListener('click', () => {
   controllerDetailCache.clear();
   refresh();
 });
+
 refresh();
 setInterval(refresh, 15000);
