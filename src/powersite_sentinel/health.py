@@ -7,7 +7,6 @@ import datetime as dt
 from powersite_sentinel.config import Settings
 from powersite_sentinel.models import Finding, Score
 
-
 _CONTROLLER_TELEMETRY_METRICS = (
     "solar_input_power_w",
     "charge_output_power_w",
