@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import datetime as dt
 
 from powersite_sentinel.config import Settings
 from powersite_sentinel.models import Finding, Score
+
+_CONTROLLER_TELEMETRY_METRICS = (
+    "solar_input_power_w",
+    "charge_output_power_w",
+    "battery_charge_current_a",
+    "battery_voltage_v",
+    "array_voltage_v",
+    "daily_charge_wh",
+    "daily_charge_kwh",
+    "charge_state",
+    "faults",
+    "alarms",
+)
 
 
 def _number(value: object) -> float | None:
@@ -26,15 +39,39 @@ def _status(value: int) -> str:
     return "critical"
 
 
+def _controller_telemetry_coverage(snapshot: dict[str, object]) -> tuple[int, int, int] | None:
+    """Return capability-aware coverage for controller-native normalized metrics."""
+    latest = snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else {}
+    metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
+
+    supported = 0
+    reporting = 0
+    for name in _CONTROLLER_TELEMETRY_METRICS:
+        payload = metrics.get(name)
+        if not isinstance(payload, dict):
+            continue
+        expected = _number(payload.get("expected_contributors"))
+        if expected is None or expected <= 0:
+            continue
+        supported += 1
+        contributors = _number(payload.get("contributors")) or 0.0
+        if contributors >= expected:
+            reporting += 1
+
+    if supported == 0:
+        return None
+    return round(reporting / supported * 100), reporting, supported
+
+
 def calculate_scores(
     snapshot: dict[str, object],
     findings: list[Finding],
     settings: Settings,
     *,
-    now: datetime | None = None,
+    now: dt.datetime | None = None,
 ) -> dict[str, object]:
     controllers = snapshot.get("controllers") if isinstance(snapshot.get("controllers"), list) else []
-    current = (now or datetime.now(UTC)).astimezone(UTC)
+    current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
 
     communication = 100
     offline = 0
@@ -72,14 +109,25 @@ def calculate_scores(
     loads = power_flow.get("loads") if isinstance(power_flow.get("loads"), dict) else {}
     sources = power_flow.get("sources") if isinstance(power_flow.get("sources"), dict) else {}
     balance = power_flow.get("balance") if isinstance(power_flow.get("balance"), dict) else {}
-    visibility_checks = (
+
+    accounting_checks = (
         _metric_known(sources.get("solar_input_power_w")),
         _metric_known(battery.get("net_power_w")),
         _metric_known(loads.get("dc_power_w")),
         _metric_known(balance.get("system_charge_power_w")),
         _metric_known(battery.get("soc_percent")),
     )
-    observability = round(sum(1 for item in visibility_checks if item) / len(visibility_checks) * 100)
+    power_accounting = round(
+        sum(1 for item in accounting_checks if item) / len(accounting_checks) * 100
+    )
+
+    telemetry_coverage = _controller_telemetry_coverage(snapshot)
+    if telemetry_coverage is None:
+        observability = power_accounting
+        observed_metrics = sum(1 for item in accounting_checks if item)
+        supported_metrics = len(accounting_checks)
+    else:
+        observability, observed_metrics, supported_metrics = telemetry_coverage
 
     overall = round(communication * 0.35 + freshness * 0.25 + operational * 0.40)
     dimensions = [
@@ -109,13 +157,34 @@ def calculate_scores(
         "overall": {
             "value": overall,
             "status": _status(overall),
-            "explanation": "Weighted communications, freshness, and evidence-backed operational findings.",
+            "explanation": (
+                "Weighted communications, freshness, and evidence-backed operational findings. "
+                "A high score means no problem was detected in observed evidence; it does not imply "
+                "that every whole-site electrical quantity is measured."
+            ),
         },
         "observability": {
             "value": observability,
             "status": "high" if observability >= 80 else "partial" if observability >= 40 else "limited",
+            "observed_metrics": observed_metrics,
+            "supported_metrics": supported_metrics,
             "explanation": (
-                "Visibility score is separate from health so missing sensors are not treated as failures."
+                "Capability-aware coverage of controller-native telemetry expected from the "
+                "enrolled hardware."
+            ),
+        },
+        "power_accounting": {
+            "value": power_accounting,
+            "status": (
+                "complete"
+                if power_accounting >= 80
+                else "partial"
+                if power_accounting >= 40
+                else "limited"
+            ),
+            "explanation": (
+                "Whole-site electrical accounting completeness. Battery net flow, load power, and SOC "
+                "remain unmeasured unless source-backed system/shunt sensors provide them."
             ),
         },
         "dimensions": [item.to_dict() for item in dimensions],
