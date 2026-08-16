@@ -32,6 +32,7 @@ class SentinelService:
         self.store = store
         self.settings = settings
         self._cache: dict[str, dict[str, object]] = {}
+        self._controller_cache: dict[str, dict[str, object]] = {}
         self._site_cache: list[dict[str, object]] | None = None
         self._monitor_task: asyncio.Task[None] | None = None
 
@@ -80,6 +81,30 @@ class SentinelService:
         }
         self._cache[site_uid] = assessment
         return assessment
+
+    async def controller_detail(self, controller_uid: str) -> dict[str, object]:
+        """Return on-demand controller detail with last-known-good outage fallback."""
+        try:
+            snapshot = await self.client.controller_snapshot(controller_uid)
+        except MorningstarApiError as exc:
+            cached = self._controller_cache.get(controller_uid)
+            if cached is None:
+                raise
+            stale = dict(cached)
+            stale["upstream"] = {
+                "status": "unreachable",
+                "stale": True,
+                "error": str(exc),
+            }
+            return stale
+
+        detail = {
+            "controller_uid": controller_uid,
+            "snapshot": snapshot,
+            "upstream": {"status": "reachable", "stale": False},
+        }
+        self._controller_cache[controller_uid] = detail
+        return detail
 
     async def assess_all(self) -> list[dict[str, object]]:
         sites = await self.list_sites()
