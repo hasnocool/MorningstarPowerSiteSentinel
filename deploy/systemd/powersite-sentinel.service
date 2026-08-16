@@ -1,0 +1,21 @@
+[Unit]
+Description=Morningstar PowerSite Sentinel
+After=network-online.target morningstar-modbus-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=powersite
+Group=powersite
+WorkingDirectory=/opt/MorningstarPowerSiteSentinel
+ExecStart=/opt/MorningstarPowerSiteSentinel/.venv/bin/powersite-sentinel --config /etc/powersite-sentinel.toml serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/powersite-sentinel
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[morningstar]
+base_url = "http://127.0.0.1:8080"
+timeout_seconds = 5.0
+
+[sentinel]
+database_path = "./data/sentinel.db"
+poll_interval_seconds = 15.0
+monitor_enabled = true
+stale_after_seconds = 45.0
+residual_warning_w = 50.0
+residual_warning_percent = 8.0
+residual_critical_percent = 20.0
+soc_warning_percent = 30.0
+soc_critical_percent = 15.0
+
+[server]
+host = "127.0.0.1"
+port = 8090
