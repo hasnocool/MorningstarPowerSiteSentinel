@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PowerSite Sentinel</title>
     <link rel="stylesheet" href="/assets/styles.css" />
+    <link rel="stylesheet" href="/assets/site-inspector.css" />
   </head>
   <body>
     <header>
@@ -21,20 +22,27 @@
       <div id="banner" class="banner">Connecting to Sentinel…</div>
       <section id="sites" class="site-grid"></section>
     </main>
+
     <template id="site-template">
       <article class="site-card">
-        <div class="site-heading">
-          <div>
-            <p class="site-name"></p>
-            <p class="site-id mono"></p>
-          </div>
-          <div class="score-ring"><span class="score"></span><small>health</small></div>
-        </div>
+        <button class="site-toggle" type="button" aria-expanded="false">
+          <span class="site-heading-copy">
+            <span class="site-name"></span>
+            <span class="site-id mono"></span>
+            <span class="site-status"></span>
+          </span>
+          <span class="site-heading-actions">
+            <span class="score-ring"><span class="score"></span><small>health</small></span>
+            <span class="inspect-label">Inspect site <span class="chevron">⌄</span></span>
+          </span>
+        </button>
+
         <div class="score-row">
-          <div><strong class="observability"></strong><span>observability</span></div>
+          <div><strong class="observability"></strong><span>controller telemetry</span></div>
           <div><strong class="controllers"></strong><span>controllers</span></div>
           <div><strong class="incidents"></strong><span>open incidents</span></div>
         </div>
+
         <div class="flow-grid">
           <div><span>Solar</span><strong class="solar"></strong></div>
           <div><span>Battery net</span><strong class="battery"></strong></div>
@@ -42,6 +50,59 @@
         </div>
         <p class="explanation"></p>
         <div class="findings"></div>
+
+        <section class="site-details" hidden>
+          <div class="details-heading">
+            <div>
+              <p class="eyebrow">SITE INSPECTOR</p>
+              <h2>Site details</h2>
+            </div>
+            <span class="assessed-at"></span>
+          </div>
+
+          <section class="detail-section">
+            <h3>Identity & state</h3>
+            <div class="fact-grid site-facts"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="detail-section-heading">
+              <h3>Controllers</h3>
+              <span>Physical-controller inventory. Click a controller for current identity and connection evidence.</span>
+            </div>
+            <div class="controller-list"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="detail-section-heading">
+              <h3>Normalized site metrics</h3>
+              <span>Measured/source-backed metrics are shown first; unsupported instrumentation is hidden by default.</span>
+            </div>
+            <div class="metric-visibility">
+              <span class="metric-visibility-summary"></span>
+              <button class="secondary-button metric-visibility-toggle" type="button" hidden></button>
+            </div>
+            <div class="table-scroll">
+              <table class="detail-table">
+                <thead>
+                  <tr><th>Metric</th><th>Value</th><th>Quality</th><th>Sources</th></tr>
+                </thead>
+                <tbody class="site-metrics"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="detail-columns">
+            <section class="detail-section">
+              <h3>Energy ledger</h3>
+              <div class="fact-grid energy-ledger"></div>
+            </section>
+            <section class="detail-section">
+              <h3>Recent events</h3>
+              <div class="event-list recent-events"></div>
+            </section>
+          </section>
+        </section>
 
         <section class="forensic-panel">
           <div class="section-heading">
@@ -61,6 +122,7 @@
         </section>
       </article>
     </template>
+
     <script type="module" src="/assets/app.js"></script>
   </body>
 </html>
