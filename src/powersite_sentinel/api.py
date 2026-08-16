@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from powersite_sentinel import __version__
@@ -43,6 +43,17 @@ def create_app(settings: Settings, service: SentinelService | None = None) -> Fa
         lifespan=lifespan,
     )
     app.state.sentinel = sentinel
+
+    @app.middleware("http")
+    async def disable_web_cache(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
     web_dir = Path(__file__).with_name("web")
     app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
