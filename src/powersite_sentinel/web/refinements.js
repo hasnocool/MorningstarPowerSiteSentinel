@@ -34,6 +34,34 @@ function reconcileControllerCount(card) {
   }
 }
 
+function supportedMetricCoverage(card) {
+  let supported = 0;
+  let reporting = 0;
+  for (const row of card.querySelectorAll('.site-metrics tr')) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length < 4) continue;
+    const match = cells[3].textContent?.trim().match(/^(\d+)\/(\d+)$/);
+    if (!match) continue;
+    const contributors = Number(match[1]);
+    const expected = Number(match[2]);
+    if (!Number.isFinite(expected) || expected <= 0) continue;
+    supported += 1;
+    if (contributors >= expected) reporting += 1;
+  }
+  if (!supported) return null;
+  return { reporting, supported, percent: Math.round((reporting / supported) * 100) };
+}
+
+function reconcileTelemetryCoverage(card) {
+  const coverage = supportedMetricCoverage(card);
+  if (!coverage) return;
+  const target = card.querySelector('.observability');
+  if (!target) return;
+  const text = `${coverage.percent}%`;
+  if (target.textContent !== text) target.textContent = text;
+  target.title = `${coverage.reporting}/${coverage.supported} supported normalized metrics are reporting from their expected controller contributors.`;
+}
+
 function isUnmeasuredMetricRow(row) {
   const cells = row.querySelectorAll('td');
   if (cells.length < 2) return false;
@@ -123,8 +151,25 @@ function cleanEnergyLedger(card) {
   ledger.append(note);
 }
 
+function compactUninstrumentedAccounting(card) {
+  const grid = card.querySelector('.accounting-grid');
+  if (!grid) return;
+  const values = [...grid.querySelectorAll('strong')].map((item) => item.textContent?.trim().toLowerCase());
+  const allMissing = values.length > 0 && values.every((value) => value === 'unmeasured' || value === '—');
+  grid.classList.toggle('all-unmeasured', allMissing);
+
+  const note = card.querySelector('.coverage-note');
+  if (allMissing && note) {
+    note.dataset.originalText ||= note.textContent || '';
+    note.textContent = 'Whole-site battery/load accounting is not instrumented. Add source-backed shunt/load measurements to populate battery net flow, DC loads, and SOC. Controller telemetry above remains valid.';
+  } else if (note?.dataset.originalText) {
+    note.textContent = note.dataset.originalText;
+  }
+}
+
 function refineCard(card) {
   reconcileControllerCount(card);
+  reconcileTelemetryCoverage(card);
 
   const metricsBody = card.querySelector('.site-metrics');
   const metricsSection = metricsBody?.closest('.detail-section');
@@ -133,6 +178,7 @@ function refineCard(card) {
     updateMetricVisibility(metricsSection, showUnmeasured);
   }
 
+  compactUninstrumentedAccounting(card);
   cleanEnergyLedger(card);
 }
 
