@@ -21,25 +21,106 @@
     </main>
     <template id="site-template">
       <article class="site-card">
-        <div class="site-heading">
-          <div>
-            <p class="site-name"></p>
-            <p class="site-id mono"></p>
-          </div>
-          <div class="score-ring"><span class="score"></span><small>health</small></div>
-        </div>
+        <button class="site-toggle" type="button" aria-expanded="false">
+          <span class="site-heading-copy">
+            <span class="site-name"></span>
+            <span class="site-id mono"></span>
+            <span class="site-status"></span>
+          </span>
+          <span class="site-heading-actions">
+            <span class="score-ring"><span class="score"></span><small>evidence health</small></span>
+            <span class="inspect-label">Inspect site <span class="chevron">⌄</span></span>
+          </span>
+        </button>
+
         <div class="score-row">
-          <div><strong class="observability"></strong><span>observability</span></div>
+          <div><strong class="observability"></strong><span>controller telemetry</span></div>
+          <div><strong class="accounting"></strong><span>site accounting coverage</span></div>
           <div><strong class="controllers"></strong><span>controllers</span></div>
           <div><strong class="incidents"></strong><span>open incidents</span></div>
         </div>
-        <div class="flow-grid">
-          <div><span>Solar</span><strong class="solar"></strong></div>
-          <div><span>Battery net</span><strong class="battery"></strong></div>
-          <div><span>DC loads</span><strong class="loads"></strong></div>
-        </div>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <h2>Controller telemetry</h2>
+            <span class="telemetry-age"></span>
+          </div>
+          <div class="metric-grid controller-grid">
+            <div><span>Solar input</span><strong class="solar"></strong></div>
+            <div><span>Charge output</span><strong class="charge-output"></strong></div>
+            <div><span>Battery voltage</span><strong class="battery-voltage"></strong></div>
+            <div><span>Charge current</span><strong class="charge-current"></strong></div>
+            <div><span>Array voltage</span><strong class="array-voltage"></strong></div>
+            <div><span>Charge stage</span><strong class="charge-stage"></strong></div>
+            <div><span>Energy today</span><strong class="daily-energy"></strong></div>
+            <div><span>Battery temperature</span><strong class="battery-temperature"></strong></div>
+          </div>
+        </section>
+
+        <section class="metric-section accounting-section">
+          <div class="section-heading">
+            <h2>Whole-site power accounting</h2>
+            <span class="accounting-status"></span>
+          </div>
+          <div class="metric-grid accounting-grid">
+            <div><span>Battery net</span><strong class="battery"></strong></div>
+            <div><span>DC loads</span><strong class="loads"></strong></div>
+            <div><span>Battery SOC</span><strong class="battery-soc"></strong></div>
+          </div>
+          <p class="coverage-note"></p>
+        </section>
+
         <p class="explanation"></p>
         <div class="findings"></div>
+
+        <section class="site-details" hidden>
+          <div class="details-heading">
+            <div>
+              <p class="eyebrow">SITE INSPECTOR</p>
+              <h2>Site details</h2>
+            </div>
+            <span class="assessed-at"></span>
+          </div>
+
+          <section class="detail-section">
+            <h3>Identity & state</h3>
+            <div class="fact-grid site-facts"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="detail-section-heading">
+              <h3>Controllers</h3>
+              <span>Click a controller for identity, connection, raw registers, history and polling.</span>
+            </div>
+            <div class="controller-list"></div>
+          </section>
+
+          <section class="detail-section">
+            <div class="detail-section-heading">
+              <h3>Normalized site metrics</h3>
+              <span>Measured/source-backed metrics are shown first; unsupported instrumentation is hidden by default.</span>
+            </div>
+            <div class="table-scroll">
+              <table class="detail-table">
+                <thead>
+                  <tr><th>Metric</th><th>Value</th><th>Quality</th><th>Sources</th></tr>
+                </thead>
+                <tbody class="site-metrics"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="detail-columns">
+            <section class="detail-section">
+              <h3>Energy ledger</h3>
+              <div class="fact-grid energy-ledger"></div>
+            </section>
+            <section class="detail-section">
+              <h3>Recent events</h3>
+              <div class="event-list recent-events"></div>
+            </section>
+          </section>
+        </section>
       </article>
     </template>
     <script type="module" src="/assets/app.js"></script>

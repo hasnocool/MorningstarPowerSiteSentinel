@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from powersite_sentinel.client import MorningstarApiClient
+from powersite_sentinel.client import MorningstarApiClient, MorningstarApiError
 from powersite_sentinel.config import Settings
 from powersite_sentinel.health import calculate_scores
 from powersite_sentinel.incidents import IncidentStore
@@ -32,13 +32,35 @@ class SentinelService:
         self.store = store
         self.settings = settings
         self._cache: dict[str, dict[str, object]] = {}
+        self._controller_cache: dict[str, dict[str, object]] = {}
+        self._site_cache: list[dict[str, object]] | None = None
         self._monitor_task: asyncio.Task[None] | None = None
 
     async def list_sites(self) -> list[dict[str, object]]:
-        return await self.client.list_sites()
+        try:
+            sites = await self.client.list_sites()
+        except MorningstarApiError:
+            if self._site_cache is None:
+                raise
+            return [dict(site) for site in self._site_cache]
+        self._site_cache = [dict(site) for site in sites]
+        return sites
 
     async def assess_site(self, site_uid: str) -> dict[str, object]:
-        snapshot = await self.client.site_snapshot(site_uid)
+        try:
+            snapshot = await self.client.site_snapshot(site_uid)
+        except MorningstarApiError as exc:
+            cached = self._cache.get(site_uid)
+            if cached is None:
+                raise
+            stale = dict(cached)
+            stale["upstream"] = {
+                "status": "unreachable",
+                "stale": True,
+                "error": str(exc),
+            }
+            return stale
+
         now = datetime.now(UTC)
         findings = evaluate_findings(snapshot, self.settings, now=now)
         health = calculate_scores(snapshot, findings, self.settings, now=now)
@@ -55,9 +77,34 @@ class SentinelService:
             "findings": [item.to_dict() for item in findings],
             "open_incidents": open_incidents,
             "snapshot": snapshot,
+            "upstream": {"status": "reachable", "stale": False},
         }
         self._cache[site_uid] = assessment
         return assessment
+
+    async def controller_detail(self, controller_uid: str) -> dict[str, object]:
+        """Return on-demand controller detail with last-known-good outage fallback."""
+        try:
+            snapshot = await self.client.controller_snapshot(controller_uid)
+        except MorningstarApiError as exc:
+            cached = self._controller_cache.get(controller_uid)
+            if cached is None:
+                raise
+            stale = dict(cached)
+            stale["upstream"] = {
+                "status": "unreachable",
+                "stale": True,
+                "error": str(exc),
+            }
+            return stale
+
+        detail = {
+            "controller_uid": controller_uid,
+            "snapshot": snapshot,
+            "upstream": {"status": "reachable", "stale": False},
+        }
+        self._controller_cache[controller_uid] = detail
+        return detail
 
     async def assess_all(self) -> list[dict[str, object]]:
         sites = await self.list_sites()

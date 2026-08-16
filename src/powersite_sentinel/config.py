@@ -12,6 +12,8 @@ from pathlib import Path
 class Settings:
     morningstar_base_url: str = "http://127.0.0.1:8080"
     morningstar_timeout_seconds: float = 5.0
+    morningstar_connect_attempts: int = 5
+    morningstar_retry_backoff_seconds: float = 0.25
     database_path: str = "./data/sentinel.db"
     poll_interval_seconds: float = 15.0
     monitor_enabled: bool = True
@@ -44,6 +46,12 @@ def load_settings(path: str | None = None) -> Settings:
             morningstar_timeout_seconds=float(
                 morningstar.get("timeout_seconds", settings.morningstar_timeout_seconds)
             ),
+            morningstar_connect_attempts=int(
+                morningstar.get("connect_attempts", settings.morningstar_connect_attempts)
+            ),
+            morningstar_retry_backoff_seconds=float(
+                morningstar.get("retry_backoff_seconds", settings.morningstar_retry_backoff_seconds)
+            ),
             database_path=str(sentinel.get("database_path", settings.database_path)),
             poll_interval_seconds=float(
                 sentinel.get("poll_interval_seconds", settings.poll_interval_seconds)
@@ -73,6 +81,8 @@ def load_settings(path: str | None = None) -> Settings:
 
     env_map: tuple[tuple[str, str, object], ...] = (
         ("SENTINEL_MORNINGSTAR_URL", "morningstar_base_url", str),
+        ("SENTINEL_MORNINGSTAR_CONNECT_ATTEMPTS", "morningstar_connect_attempts", int),
+        ("SENTINEL_MORNINGSTAR_RETRY_BACKOFF", "morningstar_retry_backoff_seconds", float),
         ("SENTINEL_DATABASE_PATH", "database_path", str),
         ("SENTINEL_POLL_INTERVAL", "poll_interval_seconds", float),
         ("SENTINEL_HOST", "bind_host", str),

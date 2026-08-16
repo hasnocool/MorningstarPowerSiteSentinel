@@ -1,6 +1,9 @@
 [morningstar]
 base_url = "http://127.0.0.1:8080"
 timeout_seconds = 5.0
+# Retry connection-level failures so Sentinel tolerates an upstream startup race or brief restart.
+connect_attempts = 5
+retry_backoff_seconds = 0.25
 
 [sentinel]
 database_path = "./data/sentinel.db"
