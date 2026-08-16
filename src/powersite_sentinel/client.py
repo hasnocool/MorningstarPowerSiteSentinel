@@ -50,6 +50,13 @@ class MorningstarApiClient:
             "SENTINEL_MORNINGSTAR_URL points at its HTTP listener."
         ) from last_connect_error
 
+    async def _get_optional(self, path: str) -> object:
+        """Read an enrichment surface without making the whole inspection fail."""
+        try:
+            return await self._get(path)
+        except MorningstarApiError as exc:
+            return {"status": "unavailable", "error": str(exc)}
+
     async def health(self) -> dict[str, object]:
         payload = await self._get("/health")
         return payload if isinstance(payload, dict) else {}
@@ -71,3 +78,22 @@ class MorningstarApiClient:
         keys = list(paths)
         values = await asyncio.gather(*(self._get(paths[key]) for key in keys))
         return {key: value for key, value in zip(keys, values, strict=True)}
+
+    async def controller_snapshot(self, controller_uid: str) -> dict[str, object]:
+        """Fetch rich controller detail only when an operator opens that controller."""
+        controller = await self._get(f"/v1/controllers/{controller_uid}")
+        paths = {
+            "latest": f"/v1/controllers/{controller_uid}/latest",
+            "history_summary": f"/v1/controllers/{controller_uid}/history/summary",
+            "daily_summary": f"/v1/controllers/{controller_uid}/history/controller-daily/summary",
+            "history_coverage": f"/v1/controllers/{controller_uid}/history/coverage",
+            "polling_performance": (
+                f"/v1/controllers/{controller_uid}/polling/performance?window=300&mode=watch"
+            ),
+        }
+        keys = list(paths)
+        values = await asyncio.gather(*(self._get_optional(paths[key]) for key in keys))
+        return {
+            "controller": controller if isinstance(controller, dict) else {},
+            **{key: value for key, value in zip(keys, values, strict=True)},
+        }
