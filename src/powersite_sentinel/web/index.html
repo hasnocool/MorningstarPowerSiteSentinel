@@ -11,7 +11,9 @@
       <div>
         <p class="eyebrow">LOCAL-FIRST POWER OBSERVABILITY</p>
         <h1>PowerSite Sentinel</h1>
-        <p class="subtitle">Evidence-backed health, power flow, and incident intelligence.</p>
+        <p class="subtitle">
+          Evidence-backed health, power flow, incident intelligence, and forensic history.
+        </p>
       </div>
       <button id="refresh">Refresh</button>
     </header>
@@ -40,6 +42,23 @@
         </div>
         <p class="explanation"></p>
         <div class="findings"></div>
+
+        <section class="forensic-panel">
+          <div class="section-heading">
+            <div>
+              <p class="section-title">Flight recorder</p>
+              <p class="forensic-period mono"></p>
+            </div>
+            <span class="forensic-status"></span>
+          </div>
+          <div class="forensic-stats">
+            <div><strong class="history-coverage"></strong><span>minimum daily evidence</span></div>
+            <div><strong class="history-missing"></strong><span>missing controller-days</span></div>
+            <div><strong class="history-recovered"></strong><span>recovered controller-days</span></div>
+            <div><strong class="energy-discrepancies"></strong><span>energy discrepancy days</span></div>
+          </div>
+          <div class="timeline-preview"></div>
+        </section>
       </article>
     </template>
     <script type="module" src="/assets/app.js"></script>

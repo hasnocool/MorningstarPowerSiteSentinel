@@ -1,34 +1,24 @@
 # Roadmap
 
-## v0.1 — local site sentinel
+## v0.1 — local site sentinel ✅
 
-- Morningstar system adapter
-- deterministic health/anomaly rules
-- health vs observability scoring
-- incident persistence
-- explanation API
-- local web console
-- Docker/systemd deployment
+- live Morningstar system adapter, health/observability, deterministic rules, incidents, explanations, web console, Docker/systemd
 
-## v0.2 — historical diagnostics
+## v0.2 — flight recorder / historical diagnostics ✅
 
-- consume controller history coverage/gap reconciliation endpoints
-- incident timeline merged with upstream alarms/faults/reconnects/charge-state changes
-- daily energy-counter vs locally integrated-energy discrepancy checks
-- configurable quiet periods and alert routing
+- controller history coverage/gap reconciliation
+- recovered/partial/missing controller-day diagnostics
+- daily controller-counter vs bounded local-energy comparisons with evidence-quality gates
+- unified communications/charge/fault/alarm/history/energy/incident timeline
+- conservative communication-recovery derivation
+- separate historical polling/cache and flight-recorder UI summary
 
 ## v0.3 — predictive maintenance
 
-- trend baselines for production, voltage sag/recovery, controller temperatures, communications reliability,
-  conversion residuals, and charge-stage duration
+- production, voltage sag/recovery, temperatures, communications reliability, conversion residual, charge-stage duration, and energy-discrepancy baselines
 - seasonal/time-of-day baselines with explicit confidence and minimum-data requirements
+- evidence-backed change-point detection
 
 ## v0.4 — federation
 
-- multiple edge Sentinels reporting compact normalized health summaries to an optional central fleet service
-- raw high-frequency data remains local by default
-
-## Future adapters
-
-Keep the core component model vendor-neutral so BMS, inverter, AC meter, weather, generator-telemetry, and other
-read-only adapters can feed the same source/storage/load/converter/meter/environment roles.
+- optional compact multi-site health/incident federation; raw high-frequency data remains local by default

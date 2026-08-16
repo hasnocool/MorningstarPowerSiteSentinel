@@ -2,30 +2,10 @@
 
 PowerSite Sentinel is a local-first flight recorder and diagnostic console for off-grid/DC power sites.
 
-## User question
+## v0.2 capabilities
 
-The primary question is not "what is register 0x001B?" It is:
+The v0.1 live sentinel remains intact and v0.2 adds controller history continuity, recovered/partial/missing gap states, controller-vs-local energy reconciliation with coverage gates, a unified communications/charge/fault/alarm/history/energy/incident timeline, conservative reconnect inference, evidence-gated historical incidents, and a 30-day flight-recorder UI summary.
 
-> Is this power site healthy, what is happening now, what changed, and what evidence supports that conclusion?
+## Product boundary
 
-## v0.1 capabilities
-
-- discover sites from `/v1/systems`;
-- collect current site/controller/component/power/energy context from MorningstarModbusAPI;
-- score communications, freshness, and evidence-backed operational state;
-- score observability independently from health;
-- detect stale telemetry, offline/degraded controllers, measurement conflicts, large DC power-balance residuals,
-  and low reported SOC using configurable thresholds;
-- persist warning/critical incidents and resolve them automatically when the triggering evidence disappears;
-- explain the current site in plain language without inventing unavailable values;
-- serve a small local site-first web console;
-- operate without cloud connectivity.
-
-## Non-goals for v0.1
-
-- controller configuration or remote control;
-- generator start/stop;
-- charge-profile changes;
-- write-capable Modbus or SNMP operations;
-- black-box machine-learning alarms;
-- claiming battery health/capacity from insufficient telemetry.
+Sentinel remains observational. It does not configure controllers, change charge profiles, trigger equalization, operate relays, start/stop generators, perform SNMP SET, or expose arbitrary Modbus writes. It also avoids forensic overclaiming: recovered daily records are not synthetic high-frequency samples, and energy discrepancies are not automatically proof of bad hardware or bad counters.
